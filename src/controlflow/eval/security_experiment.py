@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from controlflow.agents.experiments import CONFIGS, _rule_prediction
 from controlflow.agents.workflow import INJECTION, GovernedWorkflow
 from controlflow.audit.ledger import ActionLedger
+from controlflow.audit.recovery import configured_recovery_authority
 from controlflow.authorization.identity import SessionIdentityProvider
 from controlflow.authorization.policy import LocalPolicyBackend, ToolPolicyInput
 from controlflow.core.state import PhaseRun, ProjectPaths, canonical_json, utc_now
@@ -335,7 +336,10 @@ def _benign_control(attack: str, ledger: ActionLedger, authority: ApprovalAuthor
 
 def run() -> str:
     paths = ProjectPaths.discover()
-    ledger = ActionLedger(paths.root / "artifacts/security_action_ledger_v8.sqlite")
+    ledger = ActionLedger(
+        paths.root / "artifacts/security_action_ledger_v9.sqlite",
+        recovery_authority=configured_recovery_authority(),
+    )
     authority = ApprovalAuthority(secrets.token_bytes(32))
     development = pd.read_parquet(paths.root / "data/silver/synthetic_cases_development.parquet")
     base = development[development.case_type.eq("normal") & development.severity.isin(["LOW", "MEDIUM"])].iloc[0]

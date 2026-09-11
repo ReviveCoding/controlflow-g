@@ -5,7 +5,8 @@ import json
 import os
 import secrets
 import time
-from functools import lru_cache
+from collections.abc import Callable
+from functools import lru_cache, partial
 from typing import Any
 
 import joblib
@@ -16,6 +17,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from controlflow.agents.workflow import GovernedWorkflow, WorkflowConfig, WorkflowTrace
 from controlflow.audit.ledger import ActionLedger
+from controlflow.audit.recovery import configured_recovery_authority
 from controlflow.authorization.identity import SessionIdentityProvider
 from controlflow.core.resources import GpuSemaphore
 from controlflow.core.state import PhaseRun, ProjectPaths, canonical_json, sha256_file, utc_now
@@ -155,6 +157,7 @@ def _predict_one(
     context: str,
     mode: str = "single",
     available_tools: tuple[str, ...] | None = None,
+    tool_context_loader: Callable[[list[str], list[dict[str, Any]]], str] | None = None,
 ) -> tuple[str, str, bool, dict[str, Any]]:
     tokenizer, model = _load_llm()
     try:
@@ -215,6 +218,12 @@ def _predict_one(
         pass
     plan_hash = hashlib.sha256(architecture_text.encode()).hexdigest() if mode == "planner" else "none"
     if mode in {"react", "planner"}:
+        if tool_context_loader is not None:
+            context = tool_context_loader(requested_tools, requested_arguments)
+            try:
+                tool_context = json.loads(context)
+            except (TypeError, json.JSONDecodeError):
+                tool_context = {}
         observation = "\n".join(
             f"{name}: {tool_context.get(name, '')}" for name in requested_tools if name in tool_context
         ).strip()
@@ -239,12 +248,13 @@ def _predict_one(
             add_generation_prompt=True,
         )
         execution = tokenizer(execution_prompt, return_tensors="pt", truncation=True, max_length=640).to("cuda")
+        second_started = time.perf_counter()
         with torch.inference_mode():
             second = model.generate(**execution, max_new_tokens=40, do_sample=False)
+        elapsed += time.perf_counter() - second_started
         total_input += float(execution.input_ids.shape[1])
         total_output += float(second.shape[1] - execution.input_ids.shape[1])
         text = tokenizer.decode(second[0, execution.input_ids.shape[1] :], skip_special_tokens=True)
-        elapsed = time.perf_counter() - started
     try:
         start, end = text.index("{"), text.rindex("}") + 1
         payload = json.loads(text[start:end])
@@ -277,6 +287,24 @@ def _rule_prediction(row: pd.Series) -> tuple[str, str, bool, dict[str, Any]]:
     severity = ["LOW", "MEDIUM", "HIGH", "CRITICAL"][int(np.digitize(score, [1, 3, 5]))]
     disposition = "REVIEW_REQUIRED" if severity in {"HIGH", "CRITICAL"} else "AUTO"
     return severity, disposition, True, {"llm_latency_seconds": 0.0, "input_tokens": 0.0, "output_tokens": 0.0}
+
+
+def _selected_tool_context(
+    names: list[str],
+    _arguments: list[dict[str, Any]],
+    *,
+    workflow: GovernedWorkflow,
+    row: pd.Series,
+    config: WorkflowConfig,
+    session_token: str,
+) -> str:
+    return workflow.context_for_llm(
+        row,
+        config,
+        session_token=session_token,
+        selected_tools=frozenset(names),
+        selected_tool_arguments={name: arguments for name, arguments in zip(names, _arguments, strict=False)},
+    )
 
 
 def evaluate_trace(name: str, row: pd.Series, trace: WorkflowTrace, usage: dict[str, Any]) -> dict[str, Any]:
@@ -357,7 +385,10 @@ def run_agents(only: frozenset[str] | None = None) -> str:
         name: GovernedWorkflow(
             train,
             controls,
-            ActionLedger(paths.root / f"artifacts/agent_{name}_action_ledger_protocol8.sqlite"),
+            ActionLedger(
+                paths.root / f"artifacts/agent_{name}_action_ledger_protocol9.sqlite",
+                recovery_authority=configured_recovery_authority(),
+            ),
             ApprovalAuthority(secrets.token_bytes(32)),
             risk_service=risk_service,
             state_dir=paths.root / f"artifacts/graph_state_v3/{name}",
@@ -411,12 +442,26 @@ def run_agents(only: frozenset[str] | None = None) -> str:
                         if name == "AG2_llm_rag"
                         else "single"
                     )
-                    prediction = _predict_one(
-                        str(row.narrative),
-                        workflow.context_for_llm(row, config, session_token=session_token),
-                        mode,
-                        _tool_capabilities(config) if mode in {"react", "planner"} else None,
-                    )
+                    if mode in {"react", "planner"}:
+                        prediction = _predict_one(
+                            str(row.narrative),
+                            "{}",
+                            mode,
+                            _tool_capabilities(config),
+                            partial(
+                                _selected_tool_context,
+                                workflow=workflow,
+                                row=row,
+                                config=config,
+                                session_token=session_token,
+                            ),
+                        )
+                    else:
+                        prediction = _predict_one(
+                            str(row.narrative),
+                            workflow.context_for_llm(row, config, session_token=session_token),
+                            mode,
+                        )
                     tool_requests = (
                         prediction[3]["requested_tools"]
                         if name

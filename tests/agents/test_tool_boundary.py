@@ -154,6 +154,58 @@ def test_all_read_tool_outputs_enter_llm_context(tmp_path: Path) -> None:
     assert context["query_case_data"]["values"]["case_id"] == "current"
 
 
+def test_agentic_context_executes_only_selected_tools(tmp_path: Path) -> None:
+    controls = pd.read_parquet("data/staging/nist_controls_raw.parquet").head(2)
+    training = pd.DataFrame(
+        [
+            {
+                "case_id": "train",
+                "entity_id": "ENTITY-00001",
+                "business_unit": "consumer",
+                "event_timestamp": pd.Timestamp("2024-01-01", tz="UTC"),
+                "narrative": "historic payment exception",
+            }
+        ]
+    )
+    provider, credentials = _sessions("consumer")
+    workflow = GovernedWorkflow(
+        training,
+        controls,
+        ActionLedger(tmp_path / "lazy-context.sqlite"),
+        ApprovalAuthority(b"secret"),
+        risk_service=FakeRisk(),  # type: ignore[arg-type]
+        identity_provider=provider,
+    )
+    row = training.iloc[0].copy()
+    row["case_id"] = "current"
+    row["event_timestamp"] = pd.Timestamp("2025-01-01", tz="UTC")
+    row["pit_historical_failures"] = 0
+    row["future_failures"] = 0
+    row["repeat_count"] = 1
+    row["data_sensitivity"] = 0
+    context = json.loads(
+        workflow.context_for_llm(
+            row,
+            WorkflowConfig(reranker=False),
+            session_token=credentials["consumer"],
+            selected_tools=frozenset({"query_case_data"}),
+        )
+    )
+    assert set(context) == {
+        "search_controls",
+        "search_regulations",
+        "compute_risk",
+        "compute_anomaly",
+        "query_case_data",
+    }
+    assert context["search_controls"] == []
+    assert context["search_regulations"] == []
+    assert context["compute_risk"] == {}
+    assert context["compute_anomaly"] == {}
+    assert context["query_case_data"]["values"]["case_id"] == "current"
+    assert "query_transactions" not in context
+
+
 def test_denied_or_malformed_tool_never_executes_implementation() -> None:
     called = False
 

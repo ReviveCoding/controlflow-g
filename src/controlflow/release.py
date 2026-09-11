@@ -118,6 +118,7 @@ def verify_freeze(paths: ProjectPaths) -> dict[str, Any]:
 
 
 def consume_seal(paths: ProjectPaths) -> None:
+    """Legacy non-resumable seal transition; retained for explicit callers."""
     lock = FileLock(str(paths.execution_state) + ".lock")
     with lock:
         state = json.loads(paths.execution_state.read_text(encoding="utf-8"))
@@ -127,6 +128,55 @@ def consume_seal(paths: ProjectPaths) -> None:
         state["sealed_test_consumed_at"] = utc_now()
         state["updated_at"] = utc_now()
         atomic_write_json(paths.execution_state, state)
+
+
+def begin_or_resume_final_run(paths: ProjectPaths, freeze_hash: str) -> dict[str, Any]:
+    """Atomically authorize one freeze-bound P26 run, including crash resumes.
+
+    The durable run descriptor is written before the seal is consumed. Once
+    consumed, only that same run and exact freeze may resume.
+    """
+    run_path = paths.state / "final_run.json"
+    lock = FileLock(str(paths.execution_state) + ".lock")
+    with lock:
+        state = json.loads(paths.execution_state.read_text(encoding="utf-8"))
+        existing = json.loads(run_path.read_text(encoding="utf-8")) if run_path.exists() else None
+        if existing is not None and (
+            existing.get("freeze_hash") != freeze_hash
+            or existing.get("run_id") != hashlib.sha256(f"P26:{freeze_hash}".encode()).hexdigest()
+        ):
+            raise FreezeViolation("final-run descriptor does not match the frozen candidate")
+        if state["sealed_test_consumed"]:
+            if existing is None or existing.get("status") not in {"in_progress", "complete"}:
+                raise FreezeViolation("consumed holdout has no resumable freeze-bound run")
+            return cast(dict[str, Any], existing)
+        if existing is None:
+            existing = {
+                "run_id": hashlib.sha256(f"P26:{freeze_hash}".encode()).hexdigest(),
+                "freeze_hash": freeze_hash,
+                "status": "in_progress",
+                "created_at": utc_now(),
+                "updated_at": utc_now(),
+            }
+            atomic_write_json(run_path, existing)
+        elif existing.get("status") != "in_progress":
+            raise FreezeViolation("a completed final run cannot consume a new holdout")
+        state["sealed_test_consumed"] = True
+        state["sealed_test_consumed_at"] = utc_now()
+        state["final_run_id"] = existing["run_id"]
+        state["updated_at"] = utc_now()
+        atomic_write_json(paths.execution_state, state)
+        return cast(dict[str, Any], existing)
+
+
+def complete_final_run(paths: ProjectPaths, run_id: str, result_hash: str) -> None:
+    run_path = paths.state / "final_run.json"
+    with FileLock(str(paths.execution_state) + ".lock"):
+        run = json.loads(run_path.read_text(encoding="utf-8"))
+        if run.get("run_id") != run_id or run.get("status") != "in_progress":
+            raise FreezeViolation("final-run completion does not match the active run")
+        run.update(status="complete", result_sha256=result_hash, updated_at=utc_now())
+        atomic_write_json(run_path, run)
 
 
 def evaluate_release_gates(metrics: dict[str, float]) -> tuple[str, list[dict[str, Any]]]:

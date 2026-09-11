@@ -11,6 +11,7 @@ import pandas as pd
 from controlflow.agents.durable import DurableWorkflowRunner, InjectedWorkflowCrash
 from controlflow.agents.workflow import GovernedWorkflow, WorkflowConfig
 from controlflow.audit.ledger import ActionLedger
+from controlflow.audit.recovery import configured_recovery_authority
 from controlflow.authorization.identity import SessionIdentityProvider
 from controlflow.core.state import ProjectPaths, atomic_write_json
 from controlflow.hitl.approval import ApprovalAuthority
@@ -38,7 +39,7 @@ def main() -> None:
         workflow = GovernedWorkflow(
             frame,
             controls,
-            ActionLedger(Path(args.ledger)),
+            ActionLedger(Path(args.ledger), recovery_authority=configured_recovery_authority()),
             ApprovalAuthority(secrets.token_bytes(32)),
             identity_provider=identity_provider,
         )
@@ -66,7 +67,7 @@ def main() -> None:
     elif args.mode == "checkpoint":
         atomic_write_json(Path(args.path), {"step": "before_fault", "case_id": args.case_id})
     else:
-        ledger = ActionLedger(Path(args.path))
+        ledger = ActionLedger(Path(args.path), recovery_authority=configured_recovery_authority())
         action = {
             "case_id": args.case_id,
             "action_type": "case_update",

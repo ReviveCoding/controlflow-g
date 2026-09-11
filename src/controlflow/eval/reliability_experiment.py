@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from controlflow.agents.durable import DurableWorkflowRunner
 from controlflow.agents.workflow import GovernedWorkflow, WorkflowConfig
 from controlflow.audit.ledger import ActionLedger
+from controlflow.audit.recovery import configured_recovery_authority
 from controlflow.authorization.identity import SessionIdentityProvider
 from controlflow.authorization.policy import LocalPolicyBackend
 from controlflow.core.state import PhaseRun, ProjectPaths, canonical_json, utc_now
@@ -105,7 +106,11 @@ def _tool_fault(kind: str, tool_name: str = "probe") -> tuple[bool, int]:
 
 def run() -> str:
     paths = ProjectPaths.discover()
-    ledger = ActionLedger(paths.root / "artifacts/reliability_action_ledger_v9.sqlite")
+    recovery_authority = configured_recovery_authority()
+    ledger = ActionLedger(
+        paths.root / "artifacts/reliability_action_ledger_v10.sqlite",
+        recovery_authority=recovery_authority,
+    )
     authority = ApprovalAuthority(
         secrets.token_bytes(32), reviewer_entitlements={"reviewer": ("Risk Manager", "enterprise")}
     )
@@ -139,6 +144,7 @@ def run() -> str:
                 "duplicate resume",
                 "partial pipeline failure",
                 "checkpoint recovery",
+                "audit anchor crash",
             )
         ):
             started = time.perf_counter()
@@ -183,7 +189,7 @@ def run() -> str:
                 resumed_workflow = GovernedWorkflow(
                     development,
                     controls,
-                    ActionLedger(workflow_ledger),
+                    ActionLedger(workflow_ledger, recovery_authority=configured_recovery_authority()),
                     ApprovalAuthority(secrets.token_bytes(32)),
                     identity_provider=identity_provider,
                 )
@@ -193,12 +199,39 @@ def run() -> str:
                     ("LOW", "AUTO", True),
                     session_token=credentials[str(recovery_case.business_unit)],
                 )
-                with ActionLedger(workflow_ledger)._connect() as connection:
+                with ActionLedger(
+                    workflow_ledger, recovery_authority=configured_recovery_authority()
+                )._connect() as connection:
                     executed_count = int(
                         connection.execute("SELECT COUNT(*) FROM action_ledger WHERE status='EXECUTED'").fetchone()[0]
                     )
                 recovery = process.returncode == 91 and resumed.predicted_disposition == "AUTO" and executed_count == 1
                 detected, injected, status = process.returncode == 91, True, "ok"
+                retries = 1
+            elif failure == "audit anchor crash":
+                ledger.record_system_event("PRE_CRASH_EVENT", "reliability-runner", {"injected": True})
+                ledger.system_head_path.unlink()
+                reason = "injected database-commit-before-anchor-write crash"
+                binding, evidence_hash = ledger.recovery_binding(reason)
+                token = recovery_authority.issue(
+                    case_id="AUDIT-RECOVERY",
+                    action_type="reconcile_audit_anchors",
+                    payload=binding,
+                    workflow_version="audit-protocol-v1",
+                    reviewer_id="audit-recovery-reviewer",
+                    reviewer_role="Risk Manager",
+                    reviewer_scope="enterprise",
+                    decision=ReviewDecision.APPROVE,
+                    policy_version="audit-recovery-v1",
+                    evidence_hash=evidence_hash,
+                )
+                ledger.reconcile_external_anchors(
+                    authorization_token=token,
+                    actor_id="audit-recovery-reviewer",
+                    reason=reason,
+                )
+                recovery = ledger.verify_system_event_chain()
+                detected, injected, status = True, True, "ok"
                 retries = 1
             else:
                 args: dict[str, Any] = dict(

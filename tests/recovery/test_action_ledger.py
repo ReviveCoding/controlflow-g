@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -229,6 +232,26 @@ def test_corrupt_external_anchor_fails_closed_until_explicit_reconciliation(tmp_
     assert recovered is not None
 
 
+def test_commit_before_anchor_crash_is_recoverable_with_pinned_authority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    recovery_authority = _recovery_authority()
+    ledger = ActionLedger(tmp_path / "anchor-crash.sqlite", recovery_authority=recovery_authority)
+    original = ledger._write_anchor
+    monkeypatch.setattr(ledger, "_write_anchor", lambda _event_hash: (_ for _ in ()).throw(OSError("crash")))
+    with pytest.raises(OSError, match="crash"):
+        ledger.request_review(
+            case_id="case-crash",
+            action_type="case_update",
+            payload={"status": "pending"},
+            workflow_version="v1",
+        )
+    assert not ledger.verify_event_chain()
+    monkeypatch.setattr(ledger, "_write_anchor", original)
+    _approve_recovery(ledger, recovery_authority)
+    assert ledger.verify_event_chain()
+
+
 def test_recovery_rejects_token_from_caller_selected_authority(tmp_path: Path) -> None:
     trusted = _recovery_authority()
     ledger = ActionLedger(tmp_path / "pinned-recovery.sqlite", recovery_authority=trusted)
@@ -270,6 +293,24 @@ def test_concurrent_system_events_preserve_external_anchor_order(tmp_path: Path)
     with ThreadPoolExecutor(max_workers=8) as pool:
         list(pool.map(lambda index: ledger.record_system_event("TOOL_CALL", "analyst", {"index": index}), range(32)))
     assert ledger.verify_system_event_chain()
+
+
+def test_distinct_processes_share_one_atomic_root_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    trust = tmp_path / "trust"
+    monkeypatch.setenv("CONTROLFLOW_AUDIT_TRUST_DIR", str(trust))
+    code = (
+        "from pathlib import Path; from controlflow.audit.ledger import ActionLedger; "
+        "import sys; ledger=ActionLedger(Path(sys.argv[1])); "
+        "ledger.record_system_event('BOOT','worker',{'ledger':sys.argv[1]})"
+    )
+    processes = [
+        subprocess.Popen([sys.executable, "-c", code, str(tmp_path / f"ledger-{index}.sqlite")], env=os.environ)
+        for index in range(4)
+    ]
+    assert all(process.wait(timeout=20) == 0 for process in processes)
+    assert len((trust / "root.key").read_bytes()) == 32
+    for index in range(4):
+        assert ActionLedger(tmp_path / f"ledger-{index}.sqlite").verify_system_event_chain()
 
 
 def test_unprovisioned_reviewer_cannot_self_assert_entitlement() -> None:

@@ -63,10 +63,15 @@ class ActionLedger:
         self.head_path = trust / f"{ledger_name}.head.json"
         self.system_head_path = trust / f"{ledger_name}.system.head.json"
         self.recovery_authority = recovery_authority
-        with self.protocol_lock:
+        with FileLock(str(trust / ".root-key.lock")):
             if not self.key_path.exists():
-                self.key_path.write_bytes(secrets.token_bytes(32))
+                with self.key_path.open("xb") as handle:
+                    handle.write(secrets.token_bytes(32))
+                    handle.flush()
+                    os.fsync(handle.fileno())
                 self.key_path.chmod(0o400)
+            if len(self.key_path.read_bytes()) != 32:
+                raise RuntimeError("invalid audit root signing key")
         with self._connect() as connection:
             connection.execute(
                 """

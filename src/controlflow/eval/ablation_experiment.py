@@ -11,6 +11,7 @@ import torch
 from controlflow.agents.experiments import CONFIGS, _load_llm, _predict_one, evaluate_trace
 from controlflow.agents.workflow import GovernedWorkflow
 from controlflow.audit.ledger import ActionLedger
+from controlflow.audit.recovery import configured_recovery_authority
 from controlflow.authorization.identity import SessionIdentityProvider
 from controlflow.core.resources import GpuSemaphore
 from controlflow.core.state import PhaseRun, ProjectPaths, canonical_json, sha256_file, utc_now
@@ -68,7 +69,10 @@ def run() -> str:
             workflow = GovernedWorkflow(
                 train,
                 controls,
-                ActionLedger(paths.root / f"artifacts/ablation_{name}_action_ledger_v8.sqlite"),
+                ActionLedger(
+                    paths.root / f"artifacts/ablation_{name}_action_ledger_v9.sqlite",
+                    recovery_authority=configured_recovery_authority(),
+                ),
                 ApprovalAuthority(secrets.token_bytes(32)),
                 risk_service=risk_service,
                 state_dir=paths.root / f"artifacts/ablation_graph_state_v4/{name}",

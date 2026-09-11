@@ -347,13 +347,28 @@ class GovernedWorkflow:
         )
         return selected, temporal
 
-    def context_for_llm(self, row: pd.Series, config: WorkflowConfig, *, session_token: str) -> str:
-        """Build LLM-visible context exclusively from authorized typed-tool outputs."""
+    def context_for_llm(
+        self,
+        row: pd.Series,
+        config: WorkflowConfig,
+        *,
+        session_token: str,
+        selected_tools: frozenset[str] | None = None,
+        selected_tool_arguments: dict[str, dict[str, object]] | None = None,
+    ) -> str:
+        """Build context from authorized tool outputs.
+
+        ``selected_tools`` is used by planner/ReAct architectures after their
+        first model turn.  It prevents unselected tools from being executed or
+        charged to the run.  ``None`` retains eager context construction for
+        RAG and the deterministic ControlFlow-G context assembly.
+        """
         started = time.perf_counter()
         identity = self.identity(session_token)
         resource_scope = self._enforce_resource_scope(row, identity)
         registry = ToolRegistry(self.policy, self.ledger.record_system_event)
         retrieved_by_tool: dict[str, TemporalEvidence] = {}
+        retrieval_executed = False
         feature_row = row.copy()
         feature_row["historical_failures"] = (
             row["pit_historical_failures"] if config.point_in_time_features else row["future_failures"]
@@ -361,6 +376,8 @@ class GovernedWorkflow:
 
         def search(kind: str) -> Callable[[EvidenceSearchInput], EvidenceSearchOutput]:
             def invoke_search(_request: EvidenceSearchInput) -> EvidenceSearchOutput:
+                nonlocal retrieval_executed
+                retrieval_executed = True
                 retrieved, _ = self._evidence(row, config, identity) if config.retrieval else ([], True)
                 selected = [item for item in retrieved if (item.source == "NIST SP 800-53") == (kind == "controls")]
                 retrieved_by_tool.update({item.evidence_id: item for item in selected})
@@ -563,35 +580,61 @@ class GovernedWorkflow:
         for spec in specs:
             registry.register(spec)
 
-        def invoke(name: str, arguments: dict[str, object]) -> BaseModel:
-            return registry.invoke(
-                name,
-                arguments,
-                identity=identity,
-                scope=resource_scope,
-                data_classification=int(row.get("data_sensitivity", 0)),
-                severity=Severity.LOW,
-            )
+        tool_errors: dict[str, object] = {}
 
-        control_result = invoke("search_controls", {"query": str(row.narrative)})
-        regulation_result = invoke("search_regulations", {"query": str(row.narrative)})
-        risk_result = invoke("compute_risk", {"case_id": str(row.case_id)}) if config.ml_risk else None
-        anomaly_result = (
-            invoke("compute_anomaly", {"case_id": str(row.case_id)}) if config.ml_risk and config.anomaly else None
+        def arguments_for(name: str, default: dict[str, object]) -> dict[str, object]:
+            return (selected_tool_arguments or {}).get(name, default)
+
+        def invoke(name: str, arguments: dict[str, object]) -> BaseModel | None:
+            try:
+                return registry.invoke(
+                    name,
+                    arguments,
+                    identity=identity,
+                    scope=resource_scope,
+                    data_classification=int(row.get("data_sensitivity", 0)),
+                    severity=Severity.LOW,
+                )
+            except (ValidationError, PermissionError):
+                tool_errors[name] = {"error": "argument_or_authorization_rejected"}
+                return None
+
+        enabled = {spec.name for spec in specs} if selected_tools is None else set(selected_tools)
+        control_result = (
+            invoke("search_controls", arguments_for("search_controls", {"query": str(row.narrative)}))
+            if "search_controls" in enabled
+            else None
         )
-        cases_result = invoke("search_cases", {"case_id": str(row.case_id)})
-        policy_result = invoke("get_policy_at_time", {"case_id": str(row.case_id)})
-        case_result = invoke("query_case_data", {"case_id": str(row.case_id)})
-        transaction_result = invoke("query_transactions", {"case_id": str(row.case_id)})
-        bundle_result = invoke("generate_evidence_bundle", {"case_id": str(row.case_id)})
-        control_ids = control_result.evidence_ids  # type: ignore[attr-defined]
-        regulation_ids = regulation_result.evidence_ids  # type: ignore[attr-defined]
+        regulation_result = (
+            invoke("search_regulations", arguments_for("search_regulations", {"query": str(row.narrative)}))
+            if "search_regulations" in enabled
+            else None
+        )
+        risk_result = (
+            invoke("compute_risk", arguments_for("compute_risk", {"case_id": str(row.case_id)}))
+            if config.ml_risk and "compute_risk" in enabled
+            else None
+        )
+        anomaly_result = (
+            invoke("compute_anomaly", arguments_for("compute_anomaly", {"case_id": str(row.case_id)}))
+            if config.ml_risk and config.anomaly and "compute_anomaly" in enabled
+            else None
+        )
+        auxiliary_results = {
+            name: invoke(name, arguments_for(name, {"case_id": str(row.case_id)}))
+            for name in (
+                "search_cases",
+                "get_policy_at_time",
+                "query_case_data",
+                "query_transactions",
+                "generate_evidence_bundle",
+            )
+            if name in enabled
+        }
+        control_ids = control_result.evidence_ids if isinstance(control_result, EvidenceSearchOutput) else []
+        regulation_ids = regulation_result.evidence_ids if isinstance(regulation_result, EvidenceSearchOutput) else []
         structured_context: dict[str, object] = {
-            "search_cases": cases_result.model_dump(mode="json"),
-            "get_policy_at_time": policy_result.model_dump(mode="json"),
-            "query_case_data": case_result.model_dump(mode="json"),
-            "query_transactions": transaction_result.model_dump(mode="json"),
-            "generate_evidence_bundle": bundle_result.model_dump(mode="json"),
+            name: result.model_dump(mode="json") for name, result in auxiliary_results.items() if result is not None
         }
         self._context_observations[(str(row.case_id), session_token)] = structured_context
         context = json.dumps(
@@ -601,14 +644,23 @@ class GovernedWorkflow:
                 "compute_risk": risk_result.model_dump(mode="json") if risk_result else {},
                 "compute_anomaly": anomaly_result.model_dump(mode="json") if anomaly_result else {},
                 **structured_context,
-                "propose_case_update": "write action requires the workflow authorization boundary",
+                **tool_errors,
+                **(
+                    {"propose_case_update": "write action requires the workflow authorization boundary"}
+                    if "propose_case_update" in enabled
+                    else {}
+                ),
             },
             sort_keys=True,
         )
         elapsed = time.perf_counter() - started
         # The neural retriever synchronizes each CUDA result before returning.
         # Conservatively charge its complete wall time to the GPU cost proxy.
-        gpu_seconds = elapsed if config.retrieval and config.reranker and self.require_cuda_retrieval else 0.0
+        gpu_seconds = (
+            elapsed
+            if retrieval_executed and config.retrieval and config.reranker and self.require_cuda_retrieval
+            else 0.0
+        )
         self._context_timings[(str(row.case_id), session_token)] = (elapsed, gpu_seconds)
         return context
 

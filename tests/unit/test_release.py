@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
-from controlflow.core.state import sha256_file
-from controlflow.release import FreezeViolation, evaluate_release_gates, freeze_identity_hash, verify_frozen_artifacts
+from controlflow.core.state import ProjectPaths, sha256_file
+from controlflow.release import (
+    FreezeViolation,
+    begin_or_resume_final_run,
+    evaluate_release_gates,
+    freeze_identity_hash,
+    verify_frozen_artifacts,
+)
 
 
 def passing_metrics() -> dict[str, float]:
@@ -54,3 +61,17 @@ def test_frozen_cfr_mutation_is_rejected(tmp_path: Path) -> None:
     target.write_bytes(b"mutated-cfr")
     with pytest.raises(FreezeViolation, match="cfr_raw"):
         verify_frozen_artifacts(tmp_path, artifacts)
+
+
+def test_consumed_final_run_only_resumes_same_freeze(tmp_path: Path) -> None:
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "execution_state.json").write_text(
+        json.dumps({"sealed_test_consumed": False, "updated_at": "initial"}), encoding="utf-8"
+    )
+    paths = ProjectPaths(tmp_path)
+    first = begin_or_resume_final_run(paths, "freeze-a")
+    resumed = begin_or_resume_final_run(paths, "freeze-a")
+    assert resumed["run_id"] == first["run_id"]
+    with pytest.raises(FreezeViolation, match="does not match the frozen candidate"):
+        begin_or_resume_final_run(paths, "freeze-b")
