@@ -15,7 +15,7 @@ from controlflow.core.state import (
     sha256_file,
     utc_now,
 )
-from controlflow.features.point_in_time import build_case_features
+from controlflow.features.point_in_time import attach_synthetic_pit_features
 
 
 class SealedTestAccessError(PermissionError):
@@ -105,48 +105,7 @@ def write_splits(frame: pd.DataFrame) -> None:
         "path": "data/sealed/locked_final_test.ids",
         "separate_entropy_derived_artifact": True,
     }
-    development = frame.copy()
-    feature_events = development[
-        [
-            "case_id",
-            "entity_id",
-            "feature_event_timestamp",
-            "feature_system_known_at",
-            "historical_failures",
-        ]
-    ].rename(
-        columns={
-            "case_id": "feature_source_id",
-            "feature_event_timestamp": "event_timestamp",
-            "feature_system_known_at": "system_known_at",
-            "historical_failures": "pit_historical_failures",
-        }
-    )
-    pit = build_case_features(
-        development[["case_id", "entity_id", "event_timestamp"]],
-        feature_events,
-    )
-    lineage = pit[
-        [
-            "case_id",
-            "matched_event_timestamp",
-            "matched_system_known_at",
-            "feature_source_id",
-            "pit_historical_failures",
-        ]
-    ]
-    development = development.drop(columns=["feature_event_timestamp", "feature_system_known_at"]).merge(
-        lineage, on="case_id", how="left", validate="one_to_one"
-    )
-    development = development.rename(
-        columns={
-            "matched_event_timestamp": "feature_event_timestamp",
-            "matched_system_known_at": "feature_system_known_at",
-        }
-    )
-    if development["feature_source_id"].isna().any():
-        raise ValueError("point-in-time feature lineage is incomplete")
-    development["historical_failures"] = development["pit_historical_failures"]
+    development = attach_synthetic_pit_features(frame)
     development_target = paths.root / "data" / "silver" / "synthetic_cases_development.parquet"
     development_target.parent.mkdir(parents=True, exist_ok=True)
     temporary = development_target.with_suffix(".parquet.tmp")

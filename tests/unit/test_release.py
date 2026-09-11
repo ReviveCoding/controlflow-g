@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from controlflow.release import evaluate_release_gates, freeze_identity_hash
+from pathlib import Path
+
+import pytest
+
+from controlflow.core.state import sha256_file
+from controlflow.release import FreezeViolation, evaluate_release_gates, freeze_identity_hash, verify_frozen_artifacts
 
 
 def passing_metrics() -> dict[str, float]:
@@ -38,3 +43,14 @@ def test_freeze_identity_excludes_timestamp_but_includes_inputs() -> None:
     metrics = passing_metrics()
     metrics["approval_bypass_count"] = 1
     assert evaluate_release_gates(metrics)[0] == "NO_PROMOTE"
+
+
+def test_frozen_cfr_mutation_is_rejected(tmp_path: Path) -> None:
+    target = tmp_path / "data/staging/cfr_raw.parquet"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"verified-cfr")
+    artifacts = [{"path": "data/staging/cfr_raw.parquet", "sha256": sha256_file(target)}]
+    verify_frozen_artifacts(tmp_path, artifacts)
+    target.write_bytes(b"mutated-cfr")
+    with pytest.raises(FreezeViolation, match="cfr_raw"):
+        verify_frozen_artifacts(tmp_path, artifacts)

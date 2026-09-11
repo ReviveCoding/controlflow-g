@@ -136,6 +136,26 @@ def test_audit_chain_detects_materialized_action_mutation(tmp_path: Path) -> Non
     assert not ledger.verify_event_chain()
 
 
+def test_audit_chain_detects_orphan_action(tmp_path: Path) -> None:
+    ledger = ActionLedger(tmp_path / "orphan.sqlite")
+    with ledger._connect() as connection:
+        connection.execute(
+            "INSERT INTO action_ledger "
+            "(idempotency_key,case_id,action_type,normalized_payload,workflow_version,status,requested_at) "
+            "VALUES ('orphan','case','case_update','{}','v1','EXECUTED','now')"
+        )
+    assert not ledger.verify_event_chain()
+
+
+def test_durable_system_audit_chain_detects_tampering(tmp_path: Path) -> None:
+    ledger = ActionLedger(tmp_path / "system.sqlite")
+    ledger.record_system_event("TOOL_CALL", "analyst", {"tool": "search_controls", "status": "success"})
+    assert ledger.verify_system_event_chain()
+    with ledger._connect() as connection:
+        connection.execute("UPDATE system_audit_events SET detail_json='{}'")
+    assert not ledger.verify_system_event_chain()
+
+
 def test_unprovisioned_reviewer_cannot_self_assert_entitlement() -> None:
     authority = ApprovalAuthority(b"test-secret")
     with pytest.raises(InvalidApproval, match="not provisioned"):

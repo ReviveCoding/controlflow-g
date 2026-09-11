@@ -29,4 +29,5 @@ data/stream/
 state/*.json
 state/*.jsonl
 state/*.lock
+state/audit_trust/
 reports/figures/*.png

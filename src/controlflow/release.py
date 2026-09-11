@@ -58,6 +58,7 @@ def create_freeze() -> str:
         Path("data/sealed/locked_final_test.parquet"),
         Path("data/sealed/locked_final_test.metadata.json"),
         Path("data/staging/nist_controls_raw.parquet"),
+        Path("data/staging/cfr_raw.parquet"),
         Path("results/agents.parquet"),
         Path("results/security.parquet"),
         Path("artifacts/frozen_risk_service.joblib"),
@@ -96,15 +97,20 @@ def create_freeze() -> str:
     return str(target)
 
 
+def verify_frozen_artifacts(root: Path, artifacts: list[dict[str, Any]]) -> None:
+    for item in artifacts:
+        target = root / item["path"]
+        if not target.is_file() or sha256_file(target) != item["sha256"]:
+            raise FreezeViolation(f"frozen artifact changed: {item['path']}")
+
+
 def verify_freeze(paths: ProjectPaths) -> dict[str, Any]:
     manifest = json.loads((paths.state / "freeze_manifest.json").read_text(encoding="utf-8"))
     claimed = manifest["freeze_hash"]
     actual = freeze_identity_hash(manifest)
     if claimed != actual:
         raise FreezeViolation("freeze manifest hash mismatch")
-    for item in manifest["artifacts"]:
-        if sha256_file(paths.root / item["path"]) != item["sha256"]:
-            raise FreezeViolation(f"frozen artifact changed: {item['path']}")
+    verify_frozen_artifacts(paths.root, manifest["artifacts"])
     if _git_revision(paths) != manifest["git_revision"]:
         raise FreezeViolation("Git revision differs from frozen candidate")
     return cast(dict[str, Any], manifest)

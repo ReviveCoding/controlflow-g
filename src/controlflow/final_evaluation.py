@@ -7,6 +7,7 @@ import time
 
 import joblib
 import pandas as pd
+import pyarrow.parquet as pq
 import torch
 
 from controlflow.agents.experiments import (
@@ -22,6 +23,7 @@ from controlflow.audit.ledger import ActionLedger
 from controlflow.core.resources import GpuSemaphore
 from controlflow.core.state import PhaseRun, ProjectPaths, sha256_file, utc_now
 from controlflow.data.splits import load_split
+from controlflow.features.point_in_time import PIT_RAW_COLUMNS, attach_synthetic_pit_features
 from controlflow.hitl.approval import ApprovalAuthority
 from controlflow.release import consume_seal, evaluate_release_gates, verify_freeze
 
@@ -29,10 +31,17 @@ from controlflow.release import consume_seal, evaluate_release_gates, verify_fre
 def run_final_once() -> str:
     paths = ProjectPaths.discover()
     freeze = verify_freeze(paths)
+    # Schema metadata is safe to validate before consuming the one-shot seal:
+    # no row groups, identifiers, labels, or statistics are read.
+    holdout_path = paths.root / "data/sealed/locked_final_test.parquet"
+    columns = frozenset(pq.ParquetFile(holdout_path).schema_arrow.names)
+    missing = PIT_RAW_COLUMNS.difference(columns)
+    if missing:
+        raise ValueError(f"locked holdout PIT schema is incomplete: {sorted(missing)}")
     consume_seal(paths)  # fail closed: a crash consumes this research holdout
     os.environ["CONTROLFLOW_UNLOCK_FINAL"] = "P26"
     final_ids = set(load_split("locked_final_test", phase="P26"))
-    master = pd.read_parquet(paths.root / "data/sealed/locked_final_test.parquet")
+    master = attach_synthetic_pit_features(pd.read_parquet(holdout_path))
     cases = master[master.case_id.isin(final_ids)].sort_values("case_id")
     development = pd.read_parquet(paths.root / "data/silver/synthetic_cases_development.parquet")
     controls = pd.read_parquet(paths.root / "data/staging/nist_controls_raw.parquet")

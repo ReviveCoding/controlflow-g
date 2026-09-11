@@ -37,8 +37,13 @@ class ActionLedger:
     def __init__(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         self.path = path
-        self.key_path = path.with_suffix(".audit.key")
-        self.head_path = path.with_suffix(".audit.head.json")
+        # Trust material is deliberately outside the mutable ledger directory.
+        trust = Path.cwd() / "state" / "audit_trust"
+        trust.mkdir(parents=True, exist_ok=True)
+        self.key_path = trust / "root.key"
+        ledger_name = hashlib.sha256(str(path.resolve()).encode()).hexdigest()
+        self.head_path = trust / f"{ledger_name}.head.json"
+        self.system_head_path = trust / f"{ledger_name}.system.head.json"
         if not self.key_path.exists():
             self.key_path.write_bytes(secrets.token_bytes(32))
         with self._connect() as connection:
@@ -61,6 +66,13 @@ class ActionLedger:
                 """
             )
             connection.execute(
+                """CREATE TABLE IF NOT EXISTS system_audit_events (
+                event_id INTEGER PRIMARY KEY AUTOINCREMENT, event_type TEXT NOT NULL,
+                actor_id TEXT NOT NULL, event_at TEXT NOT NULL, detail_json TEXT NOT NULL,
+                previous_hash TEXT NOT NULL, event_hash TEXT NOT NULL UNIQUE
+                )"""
+            )
+            connection.execute(
                 """CREATE TABLE IF NOT EXISTS action_events (
                 event_id INTEGER PRIMARY KEY AUTOINCREMENT, action_id INTEGER NOT NULL,
                 event_type TEXT NOT NULL, actor_id TEXT NOT NULL, event_at TEXT NOT NULL,
@@ -78,6 +90,10 @@ class ActionLedger:
     def _write_anchor(self, event_hash: str) -> None:
         signature = hmac.new(self.key_path.read_bytes(), event_hash.encode(), hashlib.sha256).hexdigest()
         atomic_write_json(self.head_path, {"event_hash": event_hash, "signature": signature})
+
+    def _write_system_anchor(self, event_hash: str) -> None:
+        signature = hmac.new(self.key_path.read_bytes(), event_hash.encode(), hashlib.sha256).hexdigest()
+        atomic_write_json(self.system_head_path, {"event_hash": event_hash, "signature": signature})
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, isolation_level=None, timeout=10)
@@ -130,6 +146,16 @@ class ActionLedger:
     def verify_event_chain(self) -> bool:
         with self._connect() as connection:
             previous = "GENESIS"
+            last_event_by_action: dict[int, str] = {}
+            allowed_transitions = {
+                "REVIEW_REQUESTED": {"REVIEW_APPROVED", "REVIEW_EDITED", "REVIEW_REJECTED"},
+                "REVIEW_EDITED": {"REVIEW_APPROVED", "REVIEW_EDITED", "REVIEW_REJECTED"},
+                "REVIEW_APPROVED": {"REVIEW_APPROVED", "APPROVED_AND_EXECUTED"},
+                "EXECUTED": {"ROLLED_BACK"},
+                "APPROVED_AND_EXECUTED": {"ROLLED_BACK"},
+                "REVIEW_REJECTED": set(),
+                "ROLLED_BACK": set(),
+            }
             for row in connection.execute(
                 "SELECT action_id,event_type,actor_id,event_at,payload_hash,detail_hash,previous_hash,event_hash "
                 "FROM action_events ORDER BY event_id"
@@ -145,6 +171,14 @@ class ActionLedger:
                 }
                 if row[6] != previous or hashlib.sha256(canonical_json(body)).hexdigest() != row[7]:
                     return False
+                action_id = int(row[0])
+                event_type = str(row[1])
+                prior_type = last_event_by_action.get(action_id)
+                if prior_type is None and event_type not in {"REVIEW_REQUESTED", "EXECUTED"}:
+                    return False
+                if prior_type is not None and event_type not in allowed_transitions.get(prior_type, set()):
+                    return False
+                last_event_by_action[action_id] = event_type
                 previous = row[7]
             for action_id, payload_hash in connection.execute(
                 "SELECT e.action_id,e.payload_hash FROM action_events e JOIN "
@@ -153,11 +187,77 @@ class ActionLedger:
             ):
                 if payload_hash != self._action_state_hash(connection, int(action_id)):
                     return False
+            orphan = connection.execute(
+                "SELECT 1 FROM action_ledger a LEFT JOIN action_events e ON e.action_id=a.action_id "
+                "WHERE e.action_id IS NULL LIMIT 1"
+            ).fetchone()
+            if orphan is not None:
+                return False
         if previous == "GENESIS" or not self.head_path.exists():
             return previous == "GENESIS" and not self.head_path.exists()
         anchor = json.loads(self.head_path.read_text(encoding="utf-8"))
         expected = hmac.new(self.key_path.read_bytes(), previous.encode(), hashlib.sha256).hexdigest()
         return anchor.get("event_hash") == previous and hmac.compare_digest(anchor.get("signature", ""), expected)
+
+    def record_system_event(self, event_type: str, actor_id: str, detail: dict[str, Any]) -> None:
+        """Persist a separately chained tool/authorization event."""
+        detail_json = canonical_json(detail).decode()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            previous_row = connection.execute(
+                "SELECT event_hash FROM system_audit_events ORDER BY event_id DESC LIMIT 1"
+            ).fetchone()
+            previous = str(previous_row[0]) if previous_row else "GENESIS"
+            event_at = utc_now()
+            body = {
+                "event_type": event_type,
+                "actor_id": actor_id,
+                "event_at": event_at,
+                "detail_json": detail_json,
+                "previous_hash": previous,
+            }
+            event_hash = hashlib.sha256(canonical_json(body)).hexdigest()
+            connection.execute(
+                "INSERT INTO system_audit_events "
+                "(event_type,actor_id,event_at,detail_json,previous_hash,event_hash) VALUES (?,?,?,?,?,?)",
+                (event_type, actor_id, event_at, detail_json, previous, event_hash),
+            )
+            connection.execute("COMMIT")
+        self._write_system_anchor(event_hash)
+
+    def verify_system_event_chain(self) -> bool:
+        with self._connect() as connection:
+            previous = "GENESIS"
+            for row in connection.execute(
+                "SELECT event_type,actor_id,event_at,detail_json,previous_hash,event_hash "
+                "FROM system_audit_events ORDER BY event_id"
+            ):
+                body = {
+                    "event_type": row[0],
+                    "actor_id": row[1],
+                    "event_at": row[2],
+                    "detail_json": row[3],
+                    "previous_hash": row[4],
+                }
+                if row[4] != previous or hashlib.sha256(canonical_json(body)).hexdigest() != row[5]:
+                    return False
+                previous = row[5]
+        if previous == "GENESIS":
+            return not self.system_head_path.exists()
+        if not self.system_head_path.exists():
+            return False
+        anchor = json.loads(self.system_head_path.read_text(encoding="utf-8"))
+        expected = hmac.new(self.key_path.read_bytes(), previous.encode(), hashlib.sha256).hexdigest()
+        return anchor.get("event_hash") == previous and hmac.compare_digest(anchor.get("signature", ""), expected)
+
+    def execution_event_count(self, action_id: int) -> int:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) FROM action_events WHERE action_id=? "
+                "AND event_type IN ('EXECUTED','APPROVED_AND_EXECUTED')",
+                (action_id,),
+            ).fetchone()
+        return int(row[0])
 
     def rollback(
         self,

@@ -2,6 +2,17 @@ from __future__ import annotations
 
 import pandas as pd
 
+PIT_RAW_COLUMNS = frozenset(
+    {
+        "case_id",
+        "entity_id",
+        "event_timestamp",
+        "feature_event_timestamp",
+        "feature_system_known_at",
+        "historical_failures",
+    }
+)
+
 
 def build_case_features(cases: pd.DataFrame, events: pd.DataFrame) -> pd.DataFrame:
     """Bitemporal as-of join using business and system-known cutoffs."""
@@ -40,3 +51,44 @@ def build_intentionally_leaky_features(cases: pd.DataFrame, events: pd.DataFrame
         how="left",
         suffixes=("", "_future"),
     )
+
+
+def attach_synthetic_pit_features(frame: pd.DataFrame) -> pd.DataFrame:
+    """Apply the same frozen bitemporal transform to development and holdout cases."""
+    missing = PIT_RAW_COLUMNS.difference(frame.columns)
+    if missing:
+        raise ValueError(f"point-in-time input columns missing: {sorted(missing)}")
+    development = frame.copy()
+    events = development[
+        ["case_id", "entity_id", "feature_event_timestamp", "feature_system_known_at", "historical_failures"]
+    ].rename(
+        columns={
+            "case_id": "feature_source_id",
+            "feature_event_timestamp": "event_timestamp",
+            "feature_system_known_at": "system_known_at",
+            "historical_failures": "pit_historical_failures",
+        }
+    )
+    pit = build_case_features(development[["case_id", "entity_id", "event_timestamp"]], events)
+    lineage = pit[
+        [
+            "case_id",
+            "matched_event_timestamp",
+            "matched_system_known_at",
+            "feature_source_id",
+            "pit_historical_failures",
+        ]
+    ]
+    development = development.drop(columns=["feature_event_timestamp", "feature_system_known_at"]).merge(
+        lineage, on="case_id", how="left", validate="one_to_one"
+    )
+    development = development.rename(
+        columns={
+            "matched_event_timestamp": "feature_event_timestamp",
+            "matched_system_known_at": "feature_system_known_at",
+        }
+    )
+    if development[["feature_source_id", "pit_historical_failures"]].isna().any().any():
+        raise ValueError("point-in-time feature lineage is incomplete")
+    development["historical_failures"] = development["pit_historical_failures"]
+    return development
