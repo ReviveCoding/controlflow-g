@@ -39,6 +39,7 @@ dependencies = [
   "uvicorn>=0.34,<1",
   "joblib>=1.4,<2",
   "filelock>=3.16,<4",
+  "filelock>=3.16,<4",
 ]
 
 [project.optional-dependencies]

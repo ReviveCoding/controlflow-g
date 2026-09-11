@@ -116,7 +116,17 @@ CONFIGS = {
 def _tool_capabilities(config: WorkflowConfig) -> tuple[str, ...]:
     tools: list[str] = []
     if config.retrieval:
-        tools.extend(["search_controls", "search_regulations"])
+        tools.extend(
+            [
+                "search_controls",
+                "search_regulations",
+                "search_cases",
+                "get_policy_at_time",
+                "query_case_data",
+                "query_transactions",
+                "generate_evidence_bundle",
+            ]
+        )
     if config.ml_risk:
         tools.append("compute_risk")
     if config.anomaly:
@@ -261,12 +271,9 @@ def _predict_one(
 
 def _rule_prediction(row: pd.Series) -> tuple[str, str, bool, dict[str, Any]]:
     score = (
-        0.35 * np.log1p(row.amount)
-        + 0.65 * row.repeat_count
-        + 1.1 * row.historical_failures
-        + 1.4 * row.data_sensitivity
+        2 * (row.amount >= 10_000) + (row.repeat_count >= 3) + 2 * (row.historical_failures >= 2) + row.data_sensitivity
     )
-    severity = ["LOW", "MEDIUM", "HIGH", "CRITICAL"][int(np.digitize(score, [2.8, 4.4, 6.4]))]
+    severity = ["LOW", "MEDIUM", "HIGH", "CRITICAL"][int(np.digitize(score, [1, 3, 5]))]
     disposition = "REVIEW_REQUIRED" if severity in {"HIGH", "CRITICAL"} else "AUTO"
     return severity, disposition, True, {"llm_latency_seconds": 0.0, "input_tokens": 0.0, "output_tokens": 0.0}
 
@@ -317,6 +324,12 @@ def evaluate_trace(name: str, row: pd.Series, trace: WorkflowTrace, usage: dict[
         "plan_hash": usage.get("plan_hash", "none"),
         "llm_requested_tools": json.dumps(usage.get("requested_tools", []), sort_keys=True),
         "llm_requested_arguments": json.dumps(usage.get("requested_arguments", []), sort_keys=True),
+        "tool_argument_errors": trace.tool_argument_errors,
+        "tool_argument_accuracy": float(
+            bool(usage.get("requested_tools", []))
+            and len(usage.get("requested_tools", [])) == len(usage.get("requested_arguments", []))
+            and trace.tool_argument_errors == 0
+        ),
         "correct_tool_request": (
             bool(usage.get("requested_tools", []))
             and set(usage.get("requested_tools", [])).issubset(set(row.permitted_tools))
@@ -334,6 +347,7 @@ def run_agents(only: frozenset[str] | None = None) -> str:
     validation = frame[frame.case_id.isin(set(load_split("validation", phase="P16")))]
     cases = validation.groupby("case_type", group_keys=False).head(10).sort_values("case_id")
     controls = pd.read_parquet(paths.root / "data/staging/nist_controls_raw.parquet")
+    regulations = pd.read_parquet(paths.root / "data/staging/cfr_raw.parquet")
     risk_service = joblib.load(paths.root / "artifacts/calibrated_risk_service.joblib")
     workflows = {
         name: GovernedWorkflow(
@@ -343,6 +357,8 @@ def run_agents(only: frozenset[str] | None = None) -> str:
             ApprovalAuthority(secrets.token_bytes(32)),
             risk_service=risk_service,
             state_dir=paths.root / f"artifacts/graph_state_v3/{name}",
+            regulations=regulations,
+            require_cuda_retrieval=True,
         )
         for name in CONFIGS
     }
@@ -399,11 +415,12 @@ def run_agents(only: frozenset[str] | None = None) -> str:
                         }
                         else None
                     )
+                    tool_arguments = prediction[3]["requested_arguments"] if tool_requests is not None else None
                     traces.append(
                         evaluate_trace(
                             name,
                             row,
-                            workflow.execute(row, config, prediction[:3], tool_requests),
+                            workflow.execute(row, config, prediction[:3], tool_requests, tool_arguments),
                             prediction[3],
                         )
                     )
@@ -439,6 +456,8 @@ def run_agents(only: frozenset[str] | None = None) -> str:
                 "unauthorized_action_rate": float((~group.authorization_correct).mean()),
                 "structured_output_failure_rate": float((~group.structured_output_valid).mean()),
                 "correct_tool_rate": float(group.correct_tool_request.mean()),
+                "tool_argument_accuracy": float(group.tool_argument_accuracy.mean()),
+                "tool_argument_error_rate": float(group.tool_argument_errors.gt(0).mean()),
                 "p50_latency_seconds": float(group.latency_seconds.quantile(0.5)),
                 "p95_latency_seconds": float(group.latency_seconds.quantile(0.95)),
                 "tokens_per_case": float(group.tokens.mean()),

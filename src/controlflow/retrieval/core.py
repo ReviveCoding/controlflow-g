@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import datetime
+from functools import lru_cache
 from typing import Protocol
 
 import numpy as np
@@ -116,3 +117,66 @@ class GovernedBM25Retriever(BM25Retriever):
                 known_time=known_time,
             )
         )
+
+
+class NeuralHybridRetriever:
+    """Sparse+dense retrieval with a pinned cross-encoder reranker.
+
+    The instance receives an already authorized point-in-time partition, so
+    neither dense scoring nor reranking can observe excluded evidence.
+    """
+
+    EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+    EMBED_REVISION = "1110a243fdf4706b3f48f1d95db1a4f5529b4d41"
+    RERANK_MODEL = "cross-encoder/ms-marco-MiniLM-L6-v2"
+    RERANK_REVISION = "233902d25c440f23af6f7d6e94d2946bac0bee0a"
+
+    def __init__(self, corpus: list[TemporalEvidence], *, require_cuda: bool = True) -> None:
+        import torch
+
+        if require_cuda and not torch.cuda.is_available():
+            raise RuntimeError("neural retrieval refused CPU fallback")
+        self.corpus = corpus
+        self.sparse = BM25Retriever(corpus)
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.embedder, self.reranker = _neural_models(device)
+        embeddings = self.embedder.encode(
+            [item.text for item in corpus],
+            batch_size=128,
+            convert_to_numpy=True,
+            normalize_embeddings=True,
+            show_progress_bar=False,
+        )
+        self.dense = DenseRetriever(corpus, np.asarray(embeddings))
+
+    def search(self, query: str, k: int) -> list[SearchHit]:
+        if not self.corpus:
+            return []
+        query_vector = np.asarray(self.embedder.encode([query], convert_to_numpy=True, normalize_embeddings=True)[0])
+        candidates = reciprocal_rank_fusion(
+            [self.sparse.search(query, 40), self.dense.search_vector(query_vector, 40)],
+            min(40, len(self.corpus)),
+        )
+        scores = self.reranker.predict([(query, hit.evidence.text) for hit in candidates])
+        order = np.argsort(np.asarray(scores))[::-1][:k]
+        return [
+            SearchHit(candidates[index].evidence, float(scores[index]), rank + 1) for rank, index in enumerate(order)
+        ]
+
+
+@lru_cache(maxsize=2)
+def _neural_models(device: str):  # type: ignore[no-untyped-def]
+    from sentence_transformers import CrossEncoder, SentenceTransformer
+
+    return (
+        SentenceTransformer(
+            NeuralHybridRetriever.EMBED_MODEL,
+            revision=NeuralHybridRetriever.EMBED_REVISION,
+            device=device,
+        ),
+        CrossEncoder(
+            NeuralHybridRetriever.RERANK_MODEL,
+            revision=NeuralHybridRetriever.RERANK_REVISION,
+            device=device,
+        ),
+    )

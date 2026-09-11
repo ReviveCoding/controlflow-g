@@ -60,10 +60,26 @@ def risk_coverage(
     predicted = probabilities.argmax(axis=1)
     confidence = probabilities.max(axis=1)
     rows: list[dict[str, float]] = []
+    z = 1.959963984540054
+
+    def wilson(successes: int, trials: int) -> tuple[float, float]:
+        if trials == 0:
+            return 0.0, 1.0
+        proportion = successes / trials
+        denominator = 1 + z**2 / trials
+        center = (proportion + z**2 / (2 * trials)) / denominator
+        radius = z * np.sqrt(proportion * (1 - proportion) / trials + z**2 / (4 * trials**2)) / denominator
+        return float(max(0.0, center - radius)), float(min(1.0, center + radius))
+
     for threshold in thresholds:
         automatic = confidence >= threshold
         critical = labels == 3
         errors = predicted != labels
+        critical_count = int(critical.sum())
+        capture_count = int((~automatic & critical).sum())
+        residual_count = int((automatic & critical & errors).sum())
+        capture_low, capture_high = wilson(capture_count, critical_count)
+        residual_low, residual_high = wilson(residual_count, critical_count)
         rows.append(
             {
                 "threshold": threshold,
@@ -72,6 +88,11 @@ def risk_coverage(
                 "critical_capture": float((~automatic & critical).sum() / max(1, critical.sum())),
                 "residual_critical_error": float((automatic & critical & errors).sum() / max(1, critical.sum())),
                 "review_precision": float((~automatic & errors).sum() / max(1, (~automatic).sum())),
+                "critical_count": float(critical_count),
+                "critical_capture_ci95_low": capture_low,
+                "critical_capture_ci95_high": capture_high,
+                "residual_critical_error_ci95_low": residual_low,
+                "residual_critical_error_ci95_high": residual_high,
             }
         )
     return pd.DataFrame(rows)

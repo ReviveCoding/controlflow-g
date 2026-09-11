@@ -89,7 +89,28 @@ def test_pending_action_can_be_approved_exactly_once(tmp_path: Path) -> None:
     assert approved.executed is True and approved.status == "EXECUTED"
     assert replay.executed is False and replay.action_id == approved.action_id
     assert ledger.verify_event_chain()
-    rolled_back = ledger.rollback(approved.action_id, actor_id="risk-manager", reason="validation rollback")
+    rollback_payload = {"target_action_id": approved.action_id, "reason": "validation rollback"}
+    rollback_token = authority.issue(
+        case_id="case-2",
+        action_type="rollback",
+        payload=rollback_payload,
+        workflow_version="v1",
+        reviewer_id="reviewer-1",
+        reviewer_role="Risk Manager",
+        reviewer_scope="enterprise",
+        decision=ReviewDecision.APPROVE,
+        policy_version="local-policy-v1",
+        evidence_hash="ev",
+    )
+    rolled_back = ledger.rollback(
+        approved.action_id,
+        actor_id="reviewer-1",
+        reason="validation rollback",
+        authorization_token=rollback_token,
+        approval_authority=authority,
+        policy_version="local-policy-v1",
+        evidence_hash="ev",
+    )
     assert rolled_back.status == "ROLLED_BACK"
     assert ledger.verify_event_chain()
 
@@ -101,6 +122,17 @@ def test_audit_anchor_detects_truncation(tmp_path: Path) -> None:
     )
     with ledger._connect() as connection:
         connection.execute("DELETE FROM action_events")
+    assert not ledger.verify_event_chain()
+
+
+def test_audit_chain_detects_materialized_action_mutation(tmp_path: Path) -> None:
+    ledger = ActionLedger(tmp_path / "ledger.sqlite")
+    ledger.request_review(
+        case_id="case-mutation", action_type="case_update", payload={"status": "pending"}, workflow_version="v1"
+    )
+    assert ledger.verify_event_chain()
+    with ledger._connect() as connection:
+        connection.execute("UPDATE action_ledger SET normalized_payload='{}'")
     assert not ledger.verify_event_chain()
 
 

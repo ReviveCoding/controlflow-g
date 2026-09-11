@@ -6,10 +6,12 @@ from dataclasses import replace
 
 import joblib
 import pandas as pd
+import torch
 
-from controlflow.agents.experiments import CONFIGS, evaluate_trace
+from controlflow.agents.experiments import CONFIGS, _load_llm, _predict_one, evaluate_trace
 from controlflow.agents.workflow import GovernedWorkflow
 from controlflow.audit.ledger import ActionLedger
+from controlflow.core.resources import GpuSemaphore
 from controlflow.core.state import PhaseRun, ProjectPaths, canonical_json, sha256_file, utc_now
 from controlflow.data.splits import load_split
 from controlflow.hitl.approval import ApprovalAuthority
@@ -38,37 +40,40 @@ def run() -> str:
     source = paths.root / "data/silver/synthetic_cases_development.parquet"
     frame = pd.read_parquet(source)
     train = frame[frame.case_id.isin(set(load_split("train", phase="P22")))]
-    llm_traces = pd.read_parquet(paths.root / "results/agent_traces.parquet")
-    llm = llm_traces[llm_traces.experiment_id == "agent-AG1_single_llm"].set_index("case_id")
-    cases = frame[frame.case_id.isin(llm.index)].set_index("case_id").loc[llm.index]
+    validation = frame[frame.case_id.isin(set(load_split("validation", phase="P22")))]
+    cases = validation.groupby("case_type", group_keys=False).head(10).sort_values("case_id")
     controls = pd.read_parquet(paths.root / "data/staging/nist_controls_raw.parquet")
+    regulations = pd.read_parquet(paths.root / "data/staging/cfr_raw.parquet")
     risk_service = joblib.load(paths.root / "artifacts/calibrated_risk_service.joblib")
     traces, summaries = [], []
-    with PhaseRun("P22", paths) as phase:
+    prediction_cache: dict[tuple[str, str], tuple[str, str, bool, dict[str, object]]] = {}
+    shared_retriever_cache: dict[object, object] = {}
+    with GpuSemaphore(), PhaseRun("P22", paths) as phase:
         for name, changes in REMOVALS.items():
             config = replace(CONFIGS["AG6_controlflow_g"], **changes)
             workflow = GovernedWorkflow(
                 train,
                 controls,
-                ActionLedger(paths.root / f"artifacts/ablation_{name}_action_ledger_v3.sqlite"),
+                ActionLedger(paths.root / f"artifacts/ablation_{name}_action_ledger_v4.sqlite"),
                 ApprovalAuthority(secrets.token_bytes(32)),
                 risk_service=risk_service,
-                state_dir=paths.root / f"artifacts/ablation_graph_state_v3/{name}",
+                state_dir=paths.root / f"artifacts/ablation_graph_state_v4/{name}",
+                regulations=regulations,
+                require_cuda_retrieval=True,
             )
+            workflow._retriever_cache = shared_retriever_cache  # type: ignore[assignment]
             current = []
-            for case_id, row in cases.iterrows():
-                row = row.copy()
-                row["case_id"] = case_id
-                prediction = (
-                    str(llm.loc[case_id].predicted_severity),
-                    str(llm.loc[case_id].predicted_disposition),
-                    bool(llm.loc[case_id].structured_output_valid),
-                )
+            for _, row in cases.iterrows():
+                context = workflow.context_for_llm(row, config)
+                cache_key = (str(row.case_id), context)
+                if cache_key not in prediction_cache:
+                    prediction_cache[cache_key] = _predict_one(str(row.narrative), context)
+                prediction = prediction_cache[cache_key]
                 observed = evaluate_trace(
                     name,
                     row,
-                    workflow.execute(row, config, prediction),
-                    {"llm_latency_seconds": 0.0, "input_tokens": 0.0, "output_tokens": 0.0},
+                    workflow.execute(row, config, prediction[:3]),
+                    prediction[3],
                 )
                 observed["experiment_id"] = f"ablation-{name}"
                 current.append(observed)
@@ -81,7 +86,7 @@ def run() -> str:
                     "dataset_hash": sha256_file(source),
                     "split_identifier": "validation_agent_scenario_sample",
                     "seed": 17,
-                    "hardware_runtime": "CPU",
+                    "hardware_runtime": "local-Windows-CUDA",
                     "timestamp": utc_now(),
                     "status": "ok",
                     "ablation": name,
@@ -95,6 +100,8 @@ def run() -> str:
         pd.DataFrame(traces).to_parquet(trace_target, index=False)
         phase.register(target, "result_table")
         phase.register(trace_target, "evaluation_traces")
+        _load_llm.cache_clear()
+        torch.cuda.empty_cache()
     return str(target)
 
 

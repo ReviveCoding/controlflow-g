@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Literal
 
 import psutil
+from filelock import FileLock, Timeout
 
 from controlflow.core.state import ProjectPaths, atomic_write_json, utc_now
 
@@ -17,29 +18,30 @@ class GpuSemaphore(AbstractContextManager["GpuSemaphore"]):
     def __init__(self, paths: ProjectPaths | None = None) -> None:
         self.paths = paths or ProjectPaths.discover()
         self.path = self.paths.root / "state" / "gpu.lock"
+        self.owner_path = self.paths.root / "state" / "gpu.owner.json"
+        self._lock = FileLock(str(self.path))
+        self.owner_token = os.urandom(16).hex()
         self.acquired = False
 
     def __enter__(self) -> GpuSemaphore:
-        if self.path.exists():
-            record = json.loads(self.path.read_text(encoding="utf-8"))
-            pid = int(record["pid"])
-            if psutil.pid_exists(pid):
-                raise RuntimeError(f"GPU is locked by live PID {pid}")
-            self.path.unlink()
-        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
-        descriptor = os.open(self.path, flags)
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            json.dump({"pid": os.getpid(), "acquired_at": utc_now()}, handle, sort_keys=True)
-            handle.flush()
-            os.fsync(handle.fileno())
+        try:
+            self._lock.acquire(timeout=0)
+        except Timeout as error:
+            raise RuntimeError("GPU is locked by another process") from error
+        atomic_write_json(
+            self.owner_path,
+            {"pid": os.getpid(), "owner_token": self.owner_token, "acquired_at": utc_now()},
+        )
         self.acquired = True
         return self
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> Literal[False]:
-        if self.acquired and self.path.exists():
-            record = json.loads(self.path.read_text(encoding="utf-8"))
-            if int(record["pid"]) == os.getpid():
-                self.path.unlink()
+        if self.acquired and self.owner_path.exists():
+            record = json.loads(self.owner_path.read_text(encoding="utf-8"))
+            if record.get("owner_token") == self.owner_token:
+                self.owner_path.unlink()
+        if self.acquired:
+            self._lock.release()
         self.acquired = False
         return False
 

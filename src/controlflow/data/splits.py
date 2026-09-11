@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 from typing import Any
 
@@ -14,6 +15,7 @@ from controlflow.core.state import (
     sha256_file,
     utc_now,
 )
+from controlflow.features.point_in_time import build_case_features
 
 
 class SealedTestAccessError(PermissionError):
@@ -25,12 +27,23 @@ def create_splits(frame: pd.DataFrame) -> dict[str, list[str]]:
     adversarial = ordered.loc[ordered["is_adversarial"], "case_id"].tolist()
     ood = ordered.loc[ordered["is_ood"] & ~ordered["is_adversarial"], "case_id"].tolist()
     eligible = ordered.loc[~ordered["is_adversarial"] & ~ordered["is_ood"]].copy()
+    # Hold out an entity namespace first, then take a strict chronological tail.
+    # The sets therefore measure distinct generalization properties rather than
+    # aliases for narrative-template families.
+    entity_number = eligible["entity_id"].str.extract(r"(\d+)$", expand=False).astype(int)
+    entity_mask = entity_number.mod(5).eq(0)
+    entity_disjoint = eligible.loc[entity_mask & eligible["template_family"].eq(7)].copy()
+    chronological = eligible.loc[~entity_mask].sort_values(["event_timestamp", "case_id"])
+    temporal_boundary = chronological["event_timestamp"].quantile(0.8)
+    temporal = chronological.loc[
+        (chronological["event_timestamp"] >= temporal_boundary) & chronological["template_family"].eq(5)
+    ]
+    pre_temporal = chronological.loc[chronological["event_timestamp"] < temporal_boundary]
     return {
-        "train": eligible.loc[eligible.template_family.isin([0, 1, 2, 3]), "case_id"].tolist(),
-        "validation": eligible.loc[eligible.template_family.eq(4), "case_id"].tolist(),
-        "temporal_test": eligible.loc[eligible.template_family.eq(5), "case_id"].tolist(),
-        "locked_final_test": eligible.loc[eligible.template_family.eq(6), "case_id"].tolist(),
-        "entity_disjoint": eligible.loc[eligible.template_family.eq(7), "case_id"].tolist(),
+        "train": pre_temporal.loc[pre_temporal["template_family"].isin([0, 1, 2, 3]), "case_id"].tolist(),
+        "validation": pre_temporal.loc[pre_temporal["template_family"].eq(4), "case_id"].tolist(),
+        "temporal_test": temporal["case_id"].tolist(),
+        "entity_disjoint": entity_disjoint["case_id"].tolist(),
         "ood": ood,
         "adversarial": adversarial,
         "stratified_sanity": ordered.groupby("severity", group_keys=False).head(10)["case_id"].tolist(),
@@ -41,13 +54,11 @@ def write_splits(frame: pd.DataFrame) -> None:
     paths = ProjectPaths.discover()
     splits = create_splits(frame)
     split_dir = paths.root / "data" / "splits"
-    sealed_dir = paths.root / "data" / "sealed"
     split_dir.mkdir(parents=True, exist_ok=True)
-    sealed_dir.mkdir(parents=True, exist_ok=True)
     records: list[dict[str, Any]] = []
     for name, ids in splits.items():
         payload = "\n".join(ids) + "\n"
-        target = (sealed_dir if name == "locked_final_test" else split_dir) / f"{name}.ids"
+        target = split_dir / f"{name}.ids"
         target.write_text(payload, encoding="utf-8")
         records.append(
             {
@@ -69,14 +80,73 @@ def write_splits(frame: pd.DataFrame) -> None:
         "status": "created_sealed",
         "sealed_final_test": True,
         "split_algorithm_sha256": hashlib.sha256(
-            canonical_json({"version": 2, "algorithm": "template-family/entity/ood separated"})
+            canonical_json(
+                {
+                    "version": 3,
+                    "algorithm": " ".join(
+                        [
+                            "template-disjoint train/validation;",
+                            "chronological tail; held entities; separate holdout",
+                        ]
+                    ),
+                }
+            )
         ).hexdigest(),
         "splits": records,
     }
     atomic_write_json(paths.state / "split_manifest.json", manifest)
 
-    final_ids = set(splits["locked_final_test"])
-    development = frame.loc[~frame["case_id"].isin(final_ids)].copy()
+    holdout_metadata = json.loads(
+        (paths.root / "data/sealed/locked_final_test.metadata.json").read_text(encoding="utf-8")
+    )
+    manifest["locked_final_test"] = {
+        "count": holdout_metadata["rows"],
+        "sha256": holdout_metadata["ids_sha256"],
+        "path": "data/sealed/locked_final_test.ids",
+        "separate_entropy_derived_artifact": True,
+    }
+    development = frame.copy()
+    feature_events = development[
+        [
+            "case_id",
+            "entity_id",
+            "feature_event_timestamp",
+            "feature_system_known_at",
+            "historical_failures",
+        ]
+    ].rename(
+        columns={
+            "case_id": "feature_source_id",
+            "feature_event_timestamp": "event_timestamp",
+            "feature_system_known_at": "system_known_at",
+            "historical_failures": "pit_historical_failures",
+        }
+    )
+    pit = build_case_features(
+        development[["case_id", "entity_id", "event_timestamp"]],
+        feature_events,
+    )
+    lineage = pit[
+        [
+            "case_id",
+            "matched_event_timestamp",
+            "matched_system_known_at",
+            "feature_source_id",
+            "pit_historical_failures",
+        ]
+    ]
+    development = development.drop(columns=["feature_event_timestamp", "feature_system_known_at"]).merge(
+        lineage, on="case_id", how="left", validate="one_to_one"
+    )
+    development = development.rename(
+        columns={
+            "matched_event_timestamp": "feature_event_timestamp",
+            "matched_system_known_at": "feature_system_known_at",
+        }
+    )
+    if development["feature_source_id"].isna().any():
+        raise ValueError("point-in-time feature lineage is incomplete")
+    development["historical_failures"] = development["pit_historical_failures"]
     development_target = paths.root / "data" / "silver" / "synthetic_cases_development.parquet"
     development_target.parent.mkdir(parents=True, exist_ok=True)
     temporary = development_target.with_suffix(".parquet.tmp")
@@ -123,7 +193,14 @@ def run() -> str:
             for case_id in identifiers
         }
         if any(
-            len({membership.get(str(frame.loc[index, "case_id"])) for index in indices}) > 1
+            len(
+                {
+                    split_name
+                    for index in indices
+                    if (split_name := membership.get(str(frame.loc[index, "case_id"]))) is not None
+                }
+            )
+            > 1
             for indices in duplicate_groups.values()
         ):
             raise ValueError("cross-split near-duplicate narratives detected")

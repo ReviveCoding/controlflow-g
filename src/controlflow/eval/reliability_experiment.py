@@ -11,16 +11,40 @@ from typing import Any
 import pandas as pd
 from pydantic import BaseModel
 
+from controlflow.agents.durable import DurableWorkflowRunner
+from controlflow.agents.workflow import GovernedWorkflow, WorkflowConfig
 from controlflow.audit.ledger import ActionLedger
 from controlflow.authorization.policy import LocalPolicyBackend
 from controlflow.core.state import PhaseRun, ProjectPaths, canonical_json, utc_now
 from controlflow.hitl.approval import ApprovalAuthority
 from controlflow.schemas import HumanDecision, IdentityContext, ReviewDecision, Severity
 from controlflow.tools.registry import ToolRegistry, ToolSpec
+from controlflow.tools.sql_safety import validate_readonly_sql
 
 
 class Probe(BaseModel):
     value: int
+
+
+class FaultingModelEndpoint:
+    def invoke(self, value: Probe, *, unavailable: bool) -> Probe:
+        if unavailable:
+            raise RuntimeError("injected model endpoint unavailable")
+        time.sleep(0.03)
+        return value
+
+
+class FaultingRetriever:
+    def search(self, value: Probe) -> Probe:
+        time.sleep(0.03)
+        return value
+
+
+class FaultingWarehouse:
+    def query(self, value: Probe) -> Probe:
+        validate_readonly_sql("SELECT case_id FROM gold.fact_case LIMIT 1", frozenset({"gold.fact_case"}))
+        time.sleep(0.03)
+        return value
 
 
 def _identity() -> IdentityContext:
@@ -41,11 +65,13 @@ def _tool_fault(kind: str, tool_name: str = "probe") -> tuple[bool, int]:
 
     def implementation(value: Probe) -> Probe:
         attempts["count"] += 1
-        if kind == "timeout":
-            time.sleep(0.03)
-        else:
-            raise RuntimeError("injected unavailable dependency")
-        return value
+        if tool_name == "llm_inference":
+            return FaultingModelEndpoint().invoke(value, unavailable=kind == "unavailable")
+        if tool_name == "retrieval_search":
+            return FaultingRetriever().search(value)
+        if tool_name == "readonly_sql_query":
+            return FaultingWarehouse().query(value)
+        return FaultingModelEndpoint().invoke(value, unavailable=True)
 
     registry.register(
         ToolSpec(
@@ -83,6 +109,21 @@ def run() -> str:
         secrets.token_bytes(32), reviewer_entitlements={"reviewer": ("Risk Manager", "enterprise")}
     )
     rows = []
+    development = pd.read_parquet(paths.root / "data/silver/synthetic_cases_development.parquet")
+    recovery_case = development[development.case_type.eq("normal") & development.severity.isin(["LOW", "MEDIUM"])].iloc[
+        0
+    ]
+    controls = pd.read_parquet(paths.root / "data/staging/nist_controls_raw.parquet")
+    recovery_config = WorkflowConfig(
+        retrieval=False,
+        temporal_retrieval=False,
+        reranker=False,
+        ml_risk=False,
+        calibration=False,
+        anomaly=False,
+        verifier=False,
+        hitl=False,
+    )
     with PhaseRun("P20", paths) as phase:
         for index, failure in enumerate(
             (
@@ -118,20 +159,39 @@ def run() -> str:
                 detected, injected, status = recovery, True, "ok"
             elif failure in {"agent crash", "partial pipeline failure", "checkpoint recovery"}:
                 checkpoint = paths.root / f"build/fault-checkpoint-{index}.json"
+                workflow_ledger = paths.root / f"artifacts/reliability_workflow_{index}.sqlite"
                 process = subprocess.run(
                     [
                         sys.executable,
                         "-m",
                         "controlflow.eval.recovery_worker",
-                        "checkpoint",
+                        "durable",
                         str(checkpoint),
-                        f"fault-{index}",
+                        str(recovery_case.case_id),
+                        "--ledger",
+                        str(workflow_ledger),
+                        "--fault",
+                        "before_execute" if failure == "agent crash" else "after_execute_before_checkpoint",
                     ],
                     check=False,
                     timeout=20,
                 )
-                recovered = pd.read_json(checkpoint, typ="series")
-                recovery = process.returncode == 91 and recovered["step"] == "before_fault"
+                resumed_workflow = GovernedWorkflow(
+                    development,
+                    controls,
+                    ActionLedger(workflow_ledger),
+                    ApprovalAuthority(secrets.token_bytes(32)),
+                )
+                resumed = DurableWorkflowRunner(resumed_workflow, checkpoint).resume(
+                    recovery_case,
+                    recovery_config,
+                    ("LOW", "AUTO", True),
+                )
+                with ActionLedger(workflow_ledger)._connect() as connection:
+                    executed_count = int(
+                        connection.execute("SELECT COUNT(*) FROM action_ledger WHERE status='EXECUTED'").fetchone()[0]
+                    )
+                recovery = process.returncode == 91 and resumed.predicted_disposition == "AUTO" and executed_count == 1
                 detected, injected, status = process.returncode == 91, True, "ok"
                 retries = 1
             else:

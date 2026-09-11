@@ -59,6 +59,8 @@ class TemporalEvidence(FrozenModel):
     system_known_to: datetime | None = None
     authorized_roles: frozenset[str] = frozenset()
     content_sha256: str
+    trusted_ingestion: bool = False
+    claim_relations: frozenset[str] = frozenset()
 
     def valid_at(self, event_time: datetime, known_time: datetime) -> bool:
         business = self.business_valid_from <= event_time and (

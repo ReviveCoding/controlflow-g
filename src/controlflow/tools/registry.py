@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from dataclasses import dataclass
@@ -27,6 +28,7 @@ class ToolSpec(Generic[InputT, OutputT]):
     timeout_seconds: float
     max_retries: int
     implementation: Callable[[InputT], OutputT]
+    description: str = ""
 
 
 class ToolDenied(PermissionError):
@@ -40,6 +42,8 @@ class ToolRegistry:
         self.audit_events: list[dict[str, Any]] = []
 
     def register(self, spec: ToolSpec[Any, Any]) -> None:
+        if re.search(r"ignore\s+(?:all\s+)?previous|override\s+system|unrestricted\s+tool", spec.description, re.I):
+            raise ValueError("untrusted tool description contains instruction-like content")
         if spec.name in self._tools:
             raise ValueError(f"duplicate tool {spec.name}")
         self._tools[spec.name] = spec

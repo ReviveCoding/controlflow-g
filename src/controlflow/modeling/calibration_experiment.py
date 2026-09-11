@@ -147,8 +147,12 @@ def run() -> str:
         coverage["timestamp"] = utc_now()
         coverage["status"] = "ok"
         coverage.to_parquet(paths.root / "results" / "risk_coverage.parquet", index=False)
-        eligible = coverage[(coverage["residual_critical_error"] == 0) & (coverage["critical_capture"] >= 0.9)]
-        review_threshold = float(eligible.threshold.min()) if len(eligible) else 0.9
+        eligible = coverage[
+            (coverage["residual_critical_error_ci95_high"] <= 0.05) & (coverage["critical_capture_ci95_low"] >= 0.9)
+        ]
+        # Fail closed when the threshold subset is too small to establish the
+        # predeclared safety bounds: no case is automatically actioned.
+        review_threshold = float(eligible.threshold.min()) if len(eligible) else 1.01
         risk_service = RiskService(train)
         risk_service.calibrator = calibrators[selected]
         risk_service.review_threshold = review_threshold

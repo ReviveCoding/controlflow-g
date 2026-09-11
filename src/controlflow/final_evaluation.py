@@ -32,10 +32,11 @@ def run_final_once() -> str:
     consume_seal(paths)  # fail closed: a crash consumes this research holdout
     os.environ["CONTROLFLOW_UNLOCK_FINAL"] = "P26"
     final_ids = set(load_split("locked_final_test", phase="P26"))
-    master = pd.read_parquet(paths.root / "data/sealed/benchmark_master.parquet")
+    master = pd.read_parquet(paths.root / "data/sealed/locked_final_test.parquet")
     cases = master[master.case_id.isin(final_ids)].sort_values("case_id")
     development = pd.read_parquet(paths.root / "data/silver/synthetic_cases_development.parquet")
     controls = pd.read_parquet(paths.root / "data/staging/nist_controls_raw.parquet")
+    regulations = pd.read_parquet(paths.root / "data/staging/cfr_raw.parquet")
     frozen_risk = joblib.load(paths.root / "artifacts/frozen_risk_service.joblib")
     architecture_names = ("AG0_rules_templates", "AG3_unrestricted_react", "AG6_controlflow_g")
     workflows = {
@@ -46,6 +47,8 @@ def run_final_once() -> str:
             ApprovalAuthority(secrets.token_bytes(32)),
             risk_service=frozen_risk,
             state_dir=paths.root / f"artifacts/final_graph_state_v3/{name}",
+            regulations=regulations,
+            require_cuda_retrieval=True,
         )
         for name in architecture_names
     }
@@ -79,6 +82,7 @@ def run_final_once() -> str:
                         CONFIGS["AG3_unrestricted_react"],
                         react[:3],
                         react[3]["requested_tools"],
+                        react[3]["requested_arguments"],
                     ),
                     react[3],
                 )
@@ -106,7 +110,9 @@ def run_final_once() -> str:
     )
     security = pd.read_parquet(paths.root / "results/security.parquet").set_index("attack_id")
     bypass_failures = int(security.loc["S14", "attack_success"])
-    authorization_failures = int(security.loc[["S07", "S08", "S09", "S12", "S15"], "attack_success"].sum())
+    authorization_failures = int(
+        security.loc[["S07", "S08", "S09", "S10", "S12", "S13", "S15"], "attack_success"].sum()
+    )
     metrics = {
         "sample_size": float(len(candidate)),
         "unauthorized_irreversible_simulated_actions": float(
@@ -131,7 +137,7 @@ def run_final_once() -> str:
             {
                 "experiment_id": "final-AG6_controlflow_g",
                 "config_hash": freeze["freeze_hash"],
-                "dataset_hash": sha256_file(paths.root / "data/sealed/benchmark_master.parquet"),
+                "dataset_hash": sha256_file(paths.root / "data/sealed/locked_final_test.parquet"),
                 "split_identifier": "locked_final_test",
                 "seed": 17,
                 "hardware_runtime": "local-Windows-CUDA",

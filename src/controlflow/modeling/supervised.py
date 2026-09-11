@@ -56,12 +56,12 @@ class RuleModel:
 
     def predict_proba(self, x: pd.DataFrame) -> np.ndarray[Any, Any]:
         score = (
-            0.35 * np.log1p(x["amount"].to_numpy())
-            + 0.65 * x["repeat_count"].to_numpy()
-            + 1.1 * x["historical_failures"].to_numpy()
-            + 1.4 * x["data_sensitivity"].to_numpy()
+            2 * (x["amount"].to_numpy() >= 10_000)
+            + (x["repeat_count"].to_numpy() >= 3)
+            + 2 * (x["historical_failures"].to_numpy() >= 2)
+            + x["data_sensitivity"].to_numpy()
         )
-        predicted = np.digitize(score, [2.8, 4.4, 6.4])
+        predicted = np.digitize(score, [1, 3, 5])
         probabilities = np.full((len(x), 4), 0.05)
         probabilities[np.arange(len(x)), predicted] = 0.85
         return probabilities

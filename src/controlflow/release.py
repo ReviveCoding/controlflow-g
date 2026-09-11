@@ -55,6 +55,8 @@ def create_freeze() -> str:
         Path("data/silver/synthetic_cases_development.parquet"),
         Path("data/sealed/benchmark_master.parquet"),
         Path("data/sealed/locked_final_test.ids"),
+        Path("data/sealed/locked_final_test.parquet"),
+        Path("data/sealed/locked_final_test.metadata.json"),
         Path("data/staging/nist_controls_raw.parquet"),
         Path("results/agents.parquet"),
         Path("results/security.parquet"),

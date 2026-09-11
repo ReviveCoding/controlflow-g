@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import re
 
 from controlflow.schemas import AgentState, ClaimVerification, VerificationResult
 
@@ -23,12 +22,10 @@ def verify_claims(state: AgentState, claims: dict[str, tuple[str, tuple[str, ...
         )
         normalized = [item.text.casefold().strip() for item in items]
         conflict = any(text.startswith("[contradicts]") for text in normalized)
-        claim_terms = set(re.findall(r"[a-z0-9-]+", text.casefold()))
-        support = any(
-            item_text.startswith("[supports]")
-            or len(claim_terms & set(re.findall(r"[a-z0-9-]+", item_text))) >= max(1, len(claim_terms) // 3)
-            for item_text in normalized
-        )
+        # Claim support is a governed ingestion relation, never a magic token
+        # embedded in untrusted text. All required evidence must come from the
+        # trusted corpus and be explicitly related to this claim.
+        support = complete and all(item.trusted_ingestion and claim_id in item.claim_relations for item in items)
         status = (
             "VERIFIED"
             if complete and temporal and authorized and hashes_valid and support and not conflict

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import secrets
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -32,6 +34,10 @@ TEMPLATES = (
     "Evidence review requested for {unit}: {scenario}. Control={control}; rule={regulation}; {facts}",
     "Operational notice from {unit}. {facts} The issue is {scenario}, mapped to {control} and {regulation}.",
 )
+HOLDOUT_TEMPLATES = (
+    "Independent holdout record for {unit}: {scenario}. Evidence maps to {control} and {regulation}; {facts}",
+    "At a later operating date, {unit} reported {scenario}. Test {control} against {regulation}. {facts}",
+)
 
 
 def _alpha_id(value: int) -> str:
@@ -43,9 +49,17 @@ def _alpha_id(value: int) -> str:
     return output
 
 
-def generate_cases(count: int, seed: int = 1729) -> pd.DataFrame:
+def generate_cases(
+    count: int,
+    seed: int = 1729,
+    *,
+    start: datetime | None = None,
+    case_prefix: str = "CASE",
+    entity_prefix: str = "ENTITY",
+    holdout: bool = False,
+) -> pd.DataFrame:
     rng = np.random.default_rng(seed)
-    start = datetime(2021, 1, 1, tzinfo=UTC)
+    start = start or datetime(2021, 1, 1, tzinfo=UTC)
     rows: list[dict[str, Any]] = []
     business_units = ("consumer", "payments", "wealth", "treasury")
     controls = ("AC-2", "AU-6", "CA-7", "IR-4", "RA-5", "SI-4")
@@ -106,12 +120,13 @@ def generate_cases(count: int, seed: int = 1729) -> pd.DataFrame:
         }[case_type]
         if is_ood:
             scenario_text = "cross-border dependency telemetry with an unseen supplier failure mechanism"
-        template_family = (index // len(CASE_TYPES)) % len(TEMPLATES)
+        templates = HOLDOUT_TEMPLATES if holdout else TEMPLATES
+        template_family = (index // len(CASE_TYPES)) % len(templates)
         facts = (
             f"repeat={repeat_count}; historical failures={historical_failures}; "
             f"customer impact={'present' if sensitive else 'not established'}; reference {_alpha_id(index)}"
         )
-        narrative = TEMPLATES[template_family].format(
+        narrative = templates[template_family].format(
             unit=business_units[index % 4].title(),
             scenario=scenario_text,
             control=control_id,
@@ -120,8 +135,12 @@ def generate_cases(count: int, seed: int = 1729) -> pd.DataFrame:
         )
         rows.append(
             {
-                "case_id": f"CASE-{index:07d}",
-                "entity_id": (f"OOD-ENTITY-{index:07d}" if is_ood else f"ENTITY-{index % max(50, count // 20):05d}"),
+                "case_id": f"{case_prefix}-{index:07d}",
+                "entity_id": (
+                    f"{entity_prefix}-OOD-{index:07d}"
+                    if is_ood
+                    else f"{entity_prefix}-{index % max(50, count // 20):05d}"
+                ),
                 "event_timestamp": event_time,
                 "case_type": case_type,
                 "business_unit": business_units[index % 4],
@@ -161,22 +180,55 @@ def generate_cases(count: int, seed: int = 1729) -> pd.DataFrame:
 
 def write_benchmark(count: int, seed: int = 1729) -> Path:
     paths = ProjectPaths.discover()
-    # Ground truth is born sealed. P09 creates a development-only projection;
-    # optimization code never receives the locked-final rows.
+    # Development truth and the entropy-derived future holdout are generated as
+    # separate artifacts. Exact holdout rows cannot be reconstructed from the
+    # public development seed or a public split predicate.
     target = paths.root / "data" / "sealed" / "benchmark_master.parquet"
     target.parent.mkdir(parents=True, exist_ok=True)
     metadata_path = target.with_suffix(".metadata.json")
     existing_version = None
     if metadata_path.exists():
         existing_version = json.loads(metadata_path.read_text(encoding="utf-8")).get("generator_version")
-    if not target.exists() or existing_version != 4:
+    if not target.exists() or existing_version != 5:
         frame = generate_cases(count, seed)
         temporary = target.with_suffix(".parquet.tmp")
         frame.to_parquet(temporary, index=False)
         temporary.replace(target)
+        holdout_seed = secrets.randbits(128)
+        holdout = generate_cases(
+            max(240, count // 6),
+            holdout_seed,
+            start=datetime(2025, 1, 1, tzinfo=UTC),
+            case_prefix="HOLDOUT",
+            entity_prefix="HOLDOUT-ENTITY",
+            holdout=True,
+        )
+        holdout_target = target.parent / "locked_final_test.parquet"
+        holdout_tmp = holdout_target.with_suffix(".parquet.tmp")
+        holdout.to_parquet(holdout_tmp, index=False)
+        holdout_tmp.replace(holdout_target)
+        ids_target = target.parent / "locked_final_test.ids"
+        ids_tmp = ids_target.with_suffix(".ids.tmp")
+        ids_tmp.write_text("\n".join(holdout["case_id"].astype(str)) + "\n", encoding="utf-8")
+        ids_tmp.replace(ids_target)
+        atomic_write_json(
+            target.parent / "locked_final_test.metadata.json",
+            {
+                "generator_version": 5,
+                "seed_commitment": hashlib.sha256(str(holdout_seed).encode()).hexdigest(),
+                "seed_disclosed": False,
+                "rows": len(holdout),
+                "sha256": sha256_file(holdout_target),
+                "ids_sha256": sha256_file(ids_target),
+                "business_time_boundary": "2025-01-01T00:00:00Z",
+                "entity_namespace": "HOLDOUT-ENTITY-*",
+                "template_set": "holdout-only-v1",
+                "created_at": utc_now(),
+            },
+        )
     metadata = {
         "generator": "controlflow.data.synthetic.generate_cases",
-        "generator_version": 4,
+        "generator_version": 5,
         "seed": seed,
         "rows": len(pd.read_parquet(target, columns=["case_id"])),
         "sha256": sha256_file(target),

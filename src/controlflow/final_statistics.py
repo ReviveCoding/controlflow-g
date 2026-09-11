@@ -17,14 +17,25 @@ def run(seed: int = 17, repeats: int = 10_000) -> str:
     baseline = pivot["agent-AG3_unrestricted_react_final"].to_numpy()
     candidate = pivot["agent-AG6_controlflow_g_final"].to_numpy()
     rng = np.random.default_rng(seed)
-    indices = rng.integers(0, len(pivot), size=(repeats, len(pivot)))
-    differences = candidate[indices].mean(axis=1) - baseline[indices].mean(axis=1)
+    entity_by_case = (
+        traces[traces.experiment_id.eq("agent-AG6_controlflow_g_final")]
+        .set_index("case_id")
+        .loc[pivot.index, "entity_id"]
+        .astype(str)
+    )
+    entity_effect = (
+        pd.Series(candidate.astype(float) - baseline.astype(float), index=pivot.index).groupby(entity_by_case).mean()
+    )
+    entity_values = entity_effect.to_numpy()
+    indices = rng.integers(0, len(entity_values), size=(repeats, len(entity_values)))
+    differences = entity_values[indices].mean(axis=1)
     discordant_candidate = int((candidate & ~baseline).sum())
     discordant_baseline = int((baseline & ~candidate).sum())
     discordant = discordant_candidate + discordant_baseline
     pvalue = float(binomtest(discordant_candidate, discordant, 0.5).pvalue) if discordant else 1.0
     metrics = {
         "sample_size": len(pivot),
+        "entity_count": len(entity_values),
         "baseline_stc": float(baseline.mean()),
         "candidate_stc": float(candidate.mean()),
         "paired_stc_difference": float(candidate.mean() - baseline.mean()),
