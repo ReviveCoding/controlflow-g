@@ -1,0 +1,42 @@
+schema_version: 1
+active_profile: SMOKE
+minimum_free_space_gib: 20
+gpu:
+  physical_count: 1
+  semaphore_path: state/gpu.lock
+  max_concurrent_heavy_jobs: 1
+  mixed_precision: true
+  fail_on_heavy_cpu_fallback: true
+monitoring:
+  interval_seconds: 30
+  track_disk: true
+  track_ram: true
+  track_gpu_vram: true
+  track_gpu_utilization: true
+  track_gpu_temperature: true
+profiles:
+  SMOKE:
+    max_public_download_gib: 2
+    max_sec_filings: 12
+    max_cfpb_rows: 20000
+    synthetic_cases: 2000
+    retrieval_max_chunks: 10000
+    traditional_seeds: 2
+    deep_seeds: 1
+  STANDARD:
+    max_public_download_gib: 12
+    max_sec_filings: 100
+    max_cfpb_rows: 250000
+    synthetic_cases: 20000
+    retrieval_max_chunks: 100000
+    traditional_seeds: 5
+    deep_seeds: 3
+  EXTENDED:
+    max_public_download_gib: 28
+    max_sec_filings: 500
+    max_cfpb_rows: 1000000
+    synthetic_cases: 100000
+    retrieval_max_chunks: 1000000
+    traditional_seeds: 5
+    deep_seeds: 3
+

@@ -1,0 +1,89 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "controlflow-g"
+version = "0.1.0"
+description = "Governed enterprise agent lakehouse research prototype for control exception investigation"
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+license = {text = "MIT"}
+dependencies = [
+  "pydantic>=2.11,<3",
+  "pydantic-settings>=2.8,<3",
+  "PyYAML>=6.0,<7",
+  "typer>=0.15,<1",
+  "httpx>=0.28,<1",
+  "tenacity>=9,<10",
+  "numpy>=1.26,<3",
+  "pandas>=2.2,<3",
+  "pyarrow>=18,<23",
+  "scipy>=1.14,<2",
+  "scikit-learn>=1.6,<2",
+  "xgboost>=3.0,<4",
+  "lightgbm>=4.6,<5",
+  "torch>=2.8,<3",
+  "transformers>=5,<6",
+  "sentence-transformers>=5,<6",
+  "accelerate>=1.5,<2",
+  "pyspark==3.5.9",
+  "delta-spark==3.3.2",
+  "mlflow>=3,<4",
+  "rank-bm25>=0.2.2,<1",
+  "sqlglot>=26,<30",
+  "networkx>=3.4,<4",
+  "matplotlib>=3.9,<4",
+  "seaborn>=0.13,<1",
+  "fastapi>=0.115,<1",
+  "uvicorn>=0.34,<1",
+  "joblib>=1.4,<2",
+  "filelock>=3.16,<4",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3,<10",
+  "pytest-cov>=6,<8",
+  "ruff>=0.9,<1",
+  "mypy>=1.14,<2",
+  "types-PyYAML>=6.0,<7",
+]
+
+[project.scripts]
+controlflow = "controlflow.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/controlflow"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+ignore_missing_imports = true
+warn_unused_ignores = true
+exclude = ["pipelines/"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+  "gpu: requires verified CUDA",
+  "spark: requires Java and Spark",
+  "network: requires public internet",
+  "sealed: accesses the locked final test and must only run in P26",
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu130" }

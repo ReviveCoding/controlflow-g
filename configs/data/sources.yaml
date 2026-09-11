@@ -1,0 +1,28 @@
+schema_version: 1
+user_agent: "ControlFlow-G research prototype contact@example.invalid"
+timeout_seconds: 60
+max_retries: 5
+sec_requests_per_second: 2
+sources:
+  nist_oscal_5_1_1:
+    url: "https://raw.githubusercontent.com/usnistgov/oscal-content/v1.3.0/nist.gov/SP800-53/rev5/json/NIST_SP-800-53_rev5_catalog.json"
+    snapshot: "oscal-content-v1.3.0-commit-941c978"
+    classification: STRICT
+  nist_800_53a_r5:
+    url: "https://csrc.nist.gov/csrc/media/Publications/sp/800-53a/rev-5/final/documents/sp800-53ar5-assessment-procedures.csv"
+    snapshot: "SP800-53A-Rev5"
+    classification: EVOLVING
+  cfpb_complaints:
+    url: "https://files.consumerfinance.gov/ccdb/complaints.csv.zip"
+    snapshot: "retrieval-date"
+    classification: EVOLVING
+  ecfr_title_12:
+    url_template: "https://www.ecfr.gov/api/versioner/v1/full/{date}/title-12.xml"
+    classification: EVOLVING
+  govinfo_title_12:
+    url_template: "https://www.govinfo.gov/bulkdata/CFR/{year}/title-12/CFR-{year}-title12-vol{volume}.xml"
+    classification: STRICT
+  sec_company_tickers:
+    url: "https://www.sec.gov/files/company_tickers_exchange.json"
+    snapshot: "retrieval-date"
+    classification: EVOLVING

@@ -1,0 +1,118 @@
+from __future__ import annotations
+
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from dataclasses import dataclass
+from typing import Any, Generic, TypeVar
+
+from pydantic import BaseModel
+
+from controlflow.authorization.policy import LocalPolicyBackend, ToolPolicyInput
+from controlflow.schemas import AuthorizationOutcome, IdentityContext, Severity
+
+InputT = TypeVar("InputT", bound=BaseModel)
+OutputT = TypeVar("OutputT", bound=BaseModel)
+
+
+@dataclass(frozen=True)
+class ToolSpec(Generic[InputT, OutputT]):
+    name: str
+    input_model: type[InputT]
+    output_model: type[OutputT]
+    risk_tier: int
+    read_only: bool
+    allowed_roles: frozenset[str]
+    allowed_data_scopes: frozenset[str]
+    human_review_required: bool
+    timeout_seconds: float
+    max_retries: int
+    implementation: Callable[[InputT], OutputT]
+
+
+class ToolDenied(PermissionError):
+    pass
+
+
+class ToolRegistry:
+    def __init__(self, policy: LocalPolicyBackend) -> None:
+        self.policy = policy
+        self._tools: dict[str, ToolSpec[Any, Any]] = {}
+        self.audit_events: list[dict[str, Any]] = []
+
+    def register(self, spec: ToolSpec[Any, Any]) -> None:
+        if spec.name in self._tools:
+            raise ValueError(f"duplicate tool {spec.name}")
+        self._tools[spec.name] = spec
+
+    def invoke(
+        self,
+        name: str,
+        raw_input: dict[str, Any],
+        *,
+        identity: IdentityContext,
+        scope: str,
+        data_classification: int,
+        severity: Severity,
+    ) -> BaseModel:
+        spec = self._tools[name]
+        parsed = spec.input_model.model_validate(raw_input)
+        authorization = self.policy.authorize(
+            identity,
+            ToolPolicyInput(
+                tool_name=name,
+                risk_tier=spec.risk_tier,
+                read_only=spec.read_only,
+                allowed_roles=spec.allowed_roles,
+                allowed_scopes=spec.allowed_data_scopes,
+                requires_review=spec.human_review_required,
+                data_classification=data_classification,
+                requested_scope=scope,
+                case_severity=severity,
+                arguments=raw_input,
+            ),
+        )
+        if authorization.outcome is AuthorizationOutcome.DENY:
+            raise ToolDenied(",".join(authorization.reasons))
+        if authorization.outcome is AuthorizationOutcome.REQUIRE_REVIEW:
+            raise ToolDenied("human_review_required")
+        last_error: Exception | None = None
+        for attempt in range(spec.max_retries + 1):
+            executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"tool-{name}")
+            future = executor.submit(spec.implementation, parsed)
+            try:
+                output = spec.output_model.model_validate(future.result(timeout=spec.timeout_seconds))
+                self.audit_events.append(
+                    {
+                        "tool": name,
+                        "attempt": attempt + 1,
+                        "authorization": authorization.outcome.value,
+                        "status": "success",
+                    }
+                )
+                executor.shutdown(wait=False, cancel_futures=True)
+                return output
+            except TimeoutError as exc:
+                future.cancel()
+                last_error = exc
+                self.audit_events.append(
+                    {
+                        "tool": name,
+                        "attempt": attempt + 1,
+                        "authorization": authorization.outcome.value,
+                        "status": "timeout",
+                    }
+                )
+            except Exception as exc:
+                last_error = exc
+                self.audit_events.append(
+                    {
+                        "tool": name,
+                        "attempt": attempt + 1,
+                        "authorization": authorization.outcome.value,
+                        "status": "error",
+                        "error_type": type(exc).__name__,
+                    }
+                )
+            finally:
+                executor.shutdown(wait=False, cancel_futures=True)
+        raise RuntimeError(f"tool {name} failed after {spec.max_retries + 1} attempts") from last_error
