@@ -173,6 +173,7 @@ class WorkflowTrace:
     action_id: int | None
     injection_detected: bool
     latency_seconds: float
+    context_gpu_seconds: float = 0.0
     retry_count: int = 0
     tool_argument_errors: int = 0
 
@@ -189,6 +190,7 @@ class GovernedWorkflow:
         regulations: pd.DataFrame | None = None,
         require_cuda_retrieval: bool = False,
         identity_provider: SessionIdentityProvider | None = None,
+        verified_corpus_hashes: dict[str, str] | None = None,
     ) -> None:
         self.risk = risk_service or RiskService(training)
         self.controls = controls
@@ -198,11 +200,15 @@ class GovernedWorkflow:
         self.state_dir = state_dir
         self.require_cuda_retrieval = require_cuda_retrieval
         self.training = training.set_index("case_id", drop=False)
-        business_units = set(training["business_unit"].astype(str))
-        self.identity_provider = identity_provider or SessionIdentityProvider.for_business_units(business_units)
+        if identity_provider is None:
+            raise ValueError("an independently provisioned identity provider is required")
+        self.identity_provider = identity_provider
         paths = ProjectPaths.discover()
-        artifact_manifest = json.loads((paths.state / "artifact_manifest.json").read_text(encoding="utf-8"))
-        recorded_hashes = {item["path"]: item["sha256"] for item in artifact_manifest["artifacts"]}
+        if verified_corpus_hashes is None:
+            artifact_manifest = json.loads((paths.state / "artifact_manifest.json").read_text(encoding="utf-8"))
+            recorded_hashes = {item["path"]: item["sha256"] for item in artifact_manifest["artifacts"]}
+        else:
+            recorded_hashes = verified_corpus_hashes
         control_path = paths.root / "data/staging/nist_controls_raw.parquet"
         regulation_path = paths.root / "data/staging/cfr_raw.parquet"
         transaction_path = paths.root / "data/staging/transactions_raw.parquet"
@@ -219,6 +225,7 @@ class GovernedWorkflow:
             raise ValueError("transaction query source failed artifact verification")
         self._retriever_cache: dict[tuple[str, int, int, bool, bool], BM25Retriever | NeuralHybridRetriever] = {}
         self._context_observations: dict[tuple[str, str], dict[str, object]] = {}
+        self._context_timings: dict[tuple[str, str], tuple[float, float]] = {}
         origin = datetime(2020, 1, 1, tzinfo=UTC)
         self.evidence_corpus: list[TemporalEvidence] = []
         for control in controls.itertuples():
@@ -260,11 +267,15 @@ class GovernedWorkflow:
                     )
                 )
 
-    def session_token_for_scope(self, business_unit: str) -> str:
-        return self.identity_provider.token_for_scope(business_unit)
-
     def identity(self, session_token: str) -> IdentityContext:
         return self.identity_provider.resolve(session_token)
+
+    @staticmethod
+    def _enforce_resource_scope(row: pd.Series, identity: IdentityContext) -> str:
+        resource_scope = str(row.business_unit)
+        if resource_scope != identity.business_unit:
+            raise PermissionError("authenticated session is not entitled to the case resource scope")
+        return resource_scope
 
     def _evidence(
         self, row: pd.Series, config: WorkflowConfig, identity: IdentityContext
@@ -322,7 +333,9 @@ class GovernedWorkflow:
 
     def context_for_llm(self, row: pd.Series, config: WorkflowConfig, *, session_token: str) -> str:
         """Build LLM-visible context exclusively from authorized typed-tool outputs."""
+        started = time.perf_counter()
         identity = self.identity(session_token)
+        resource_scope = self._enforce_resource_scope(row, identity)
         registry = ToolRegistry(self.policy, self.ledger.record_system_event)
         retrieved_by_tool: dict[str, TemporalEvidence] = {}
         feature_row = row.copy()
@@ -535,7 +548,7 @@ class GovernedWorkflow:
                 name,
                 arguments,
                 identity=identity,
-                scope=identity.business_unit,
+                scope=resource_scope,
                 data_classification=int(row.get("data_sensitivity", 0)),
                 severity=Severity.LOW,
             )
@@ -561,7 +574,7 @@ class GovernedWorkflow:
             "generate_evidence_bundle": bundle_result.model_dump(mode="json"),
         }
         self._context_observations[(str(row.case_id), session_token)] = structured_context
-        return json.dumps(
+        context = json.dumps(
             {
                 "search_controls": [retrieved_by_tool[item].text[:300] for item in control_ids],
                 "search_regulations": [retrieved_by_tool[item].text[:300] for item in regulation_ids],
@@ -572,6 +585,12 @@ class GovernedWorkflow:
             },
             sort_keys=True,
         )
+        elapsed = time.perf_counter() - started
+        # The neural retriever synchronizes each CUDA result before returning.
+        # Conservatively charge its complete wall time to the GPU cost proxy.
+        gpu_seconds = elapsed if config.retrieval and config.reranker and self.require_cuda_retrieval else 0.0
+        self._context_timings[(str(row.case_id), session_token)] = (elapsed, gpu_seconds)
+        return context
 
     def execute(
         self,
@@ -585,6 +604,7 @@ class GovernedWorkflow:
     ) -> WorkflowTrace:
         started = time.perf_counter()
         identity = self.identity(session_token)
+        resource_scope = self._enforce_resource_scope(row, identity)
         tool_calls: list[str] = []
         requested = set(llm_tool_requests) if llm_tool_requests is not None else None
         requested_arguments = {
@@ -656,7 +676,7 @@ class GovernedWorkflow:
                     "compute_risk",
                     requested_arguments.get("compute_risk", {"case_id": str(row.case_id)}),
                     identity=identity,
-                    scope=identity.business_unit,
+                    scope=resource_scope,
                     data_classification=int(row.get("data_sensitivity", 0)),
                     severity=Severity.LOW,
                 )
@@ -675,7 +695,7 @@ class GovernedWorkflow:
                         "compute_anomaly",
                         requested_arguments.get("compute_anomaly", {"case_id": str(row.case_id)}),
                         identity=identity,
-                        scope=identity.business_unit,
+                        scope=resource_scope,
                         data_classification=int(row.get("data_sensitivity", 0)),
                         severity=Severity(severity),
                     )
@@ -741,7 +761,7 @@ class GovernedWorkflow:
                             tool_name,
                             raw_arguments,
                             identity=identity,
-                            scope=identity.business_unit,
+                            scope=resource_scope,
                             data_classification=int(row.get("data_sensitivity", 0)),
                             severity=Severity(severity),
                         )
@@ -855,7 +875,7 @@ class GovernedWorkflow:
                             tool_name,
                             requested_arguments.get(tool_name, {"case_id": str(row.case_id)}),
                             identity=identity,
-                            scope=identity.business_unit,
+                            scope=resource_scope,
                             data_classification=int(row.get("data_sensitivity", 0)),
                             severity=Severity(severity),
                         )
@@ -1090,7 +1110,7 @@ class GovernedWorkflow:
                     "propose_case_update",
                     {"case_id": str(row.case_id), "status": "investigated"},
                     identity=identity,
-                    scope=identity.business_unit,
+                    scope=resource_scope,
                     data_classification=int(row.get("data_sensitivity", 0)),
                     severity=Severity(severity),
                 )
@@ -1139,6 +1159,7 @@ class GovernedWorkflow:
                 self.state_dir / f"{safe_case_key}.json",
                 state.model_dump(mode="json"),
             )
+        context_latency, context_gpu_seconds = self._context_timings.pop((str(row.case_id), session_token), (0.0, 0.0))
         return WorkflowTrace(
             case_id=str(row.case_id),
             predicted_severity=severity,
@@ -1157,6 +1178,7 @@ class GovernedWorkflow:
             action_executed=action_executed,
             action_id=action_id,
             injection_detected=injection_detected,
-            latency_seconds=time.perf_counter() - started,
+            latency_seconds=context_latency + time.perf_counter() - started,
+            context_gpu_seconds=context_gpu_seconds,
             tool_argument_errors=tool_argument_errors,
         )

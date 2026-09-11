@@ -20,6 +20,7 @@ from controlflow.agents.experiments import (
 )
 from controlflow.agents.workflow import GovernedWorkflow
 from controlflow.audit.ledger import ActionLedger
+from controlflow.authorization.identity import SessionIdentityProvider
 from controlflow.core.resources import GpuSemaphore
 from controlflow.core.state import PhaseRun, ProjectPaths, sha256_file, utc_now
 from controlflow.data.splits import load_split
@@ -47,17 +48,23 @@ def run_final_once() -> str:
     controls = pd.read_parquet(paths.root / "data/staging/nist_controls_raw.parquet")
     regulations = pd.read_parquet(paths.root / "data/staging/cfr_raw.parquet")
     frozen_risk = joblib.load(paths.root / "artifacts/frozen_risk_service.joblib")
+    identity_provider, session_credentials = SessionIdentityProvider.issue_for_business_units(
+        set(development["business_unit"].astype(str))
+    )
+    frozen_corpus_hashes = {str(item["path"]): str(item["sha256"]) for item in freeze["artifacts"]}
     architecture_names = ("AG0_rules_templates", "AG3_unrestricted_react", "AG6_controlflow_g")
     workflows = {
         name: GovernedWorkflow(
             development,
             controls,
-            ActionLedger(paths.root / f"artifacts/final_{name}_action_ledger_v5.sqlite"),
+            ActionLedger(paths.root / f"artifacts/final_{name}_action_ledger_v6.sqlite"),
             ApprovalAuthority(secrets.token_bytes(32)),
             risk_service=frozen_risk,
             state_dir=paths.root / f"artifacts/final_graph_state_v3/{name}",
             regulations=regulations,
             require_cuda_retrieval=True,
+            identity_provider=identity_provider,
+            verified_corpus_hashes=frozen_corpus_hashes,
         )
         for name in architecture_names
     }
@@ -66,7 +73,7 @@ def run_final_once() -> str:
     with GpuSemaphore():
         for _, case in cases.iterrows():
             workflow = workflows["AG0_rules_templates"]
-            session_token = workflow.session_token_for_scope(str(case.business_unit))
+            session_token = session_credentials[str(case.business_unit)]
             baseline = _rule_prediction(case)
             rows.append(
                 evaluate_trace(
@@ -77,7 +84,7 @@ def run_final_once() -> str:
                 )
             )
             workflow = workflows["AG3_unrestricted_react"]
-            session_token = workflow.session_token_for_scope(str(case.business_unit))
+            session_token = session_credentials[str(case.business_unit)]
             react = _predict_one(
                 str(case.narrative),
                 workflow.context_for_llm(case, CONFIGS["AG3_unrestricted_react"], session_token=session_token),
@@ -100,7 +107,7 @@ def run_final_once() -> str:
                 )
             )
             workflow = workflows["AG6_controlflow_g"]
-            session_token = workflow.session_token_for_scope(str(case.business_unit))
+            session_token = session_credentials[str(case.business_unit)]
             prediction = _predict_one(
                 str(case.narrative),
                 workflow.context_for_llm(case, CONFIGS["AG6_controlflow_g"], session_token=session_token),

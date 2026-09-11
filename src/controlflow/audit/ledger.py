@@ -3,9 +3,9 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import os
 import secrets
 import sqlite3
-import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import wraps
@@ -54,11 +54,8 @@ class ActionLedger:
         path.parent.mkdir(parents=True, exist_ok=True)
         self.path = path
         # Trust material is deliberately outside the mutable ledger directory.
-        trust = Path(
-            __import__("os").environ.get(
-                "CONTROLFLOW_AUDIT_TRUST_DIR", str(Path(tempfile.gettempdir()) / "controlflow-g-audit-trust")
-            )
-        )
+        default_trust = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "ControlFlow-G" / "audit-trust"
+        trust = Path(os.environ.get("CONTROLFLOW_AUDIT_TRUST_DIR", str(default_trust)))
         trust.mkdir(parents=True, exist_ok=True)
         self.protocol_lock = FileLock(str(path) + ".audit-protocol.lock")
         self.key_path = trust / "root.key"
@@ -68,6 +65,7 @@ class ActionLedger:
         with self.protocol_lock:
             if not self.key_path.exists():
                 self.key_path.write_bytes(secrets.token_bytes(32))
+                self.key_path.chmod(0o400)
         with self._connect() as connection:
             connection.execute(
                 """
@@ -105,9 +103,6 @@ class ActionLedger:
             columns = {row[1] for row in connection.execute("PRAGMA table_info(action_events)")}
             if "detail_hash" not in columns:
                 connection.execute("ALTER TABLE action_events ADD COLUMN detail_hash TEXT NOT NULL DEFAULT ''")
-            head = connection.execute("SELECT event_hash FROM action_events ORDER BY event_id DESC LIMIT 1").fetchone()
-            if head and not self.head_path.exists():
-                self._write_anchor(str(head[0]))
 
     def _write_anchor(self, event_hash: str) -> None:
         signature = hmac.new(self.key_path.read_bytes(), event_hash.encode(), hashlib.sha256).hexdigest()
@@ -158,6 +153,8 @@ class ActionLedger:
             row = connection.execute("SELECT event_hash FROM action_events ORDER BY event_id DESC LIMIT 1").fetchone()
         if row is not None:
             self._write_anchor(str(row[0]))
+        elif self.head_path.exists():
+            self.head_path.unlink()
 
     @staticmethod
     def _action_state_hash(connection: sqlite3.Connection, action_id: int) -> str:
@@ -255,8 +252,43 @@ class ActionLedger:
         self._write_system_anchor(event_hash)
 
     @ledger_locked
-    def reconcile_external_anchors(self) -> None:
-        """Explicit recovery step after a diagnosed crash; never called by action execution."""
+    def recovery_binding(self, reason: str) -> tuple[dict[str, Any], str]:
+        """Return the exact database state an independent recovery approval must bind."""
+        with self._connect() as connection:
+            action = connection.execute(
+                "SELECT event_hash FROM action_events ORDER BY event_id DESC LIMIT 1"
+            ).fetchone()
+            system = connection.execute(
+                "SELECT event_hash FROM system_audit_events ORDER BY event_id DESC LIMIT 1"
+            ).fetchone()
+        payload = {
+            "ledger_path_sha256": hashlib.sha256(str(self.path.resolve()).encode()).hexdigest(),
+            "action_head": str(action[0]) if action else "GENESIS",
+            "system_head": str(system[0]) if system else "GENESIS",
+            "reason": reason,
+        }
+        return payload, hashlib.sha256(canonical_json(payload)).hexdigest()
+
+    @ledger_locked
+    def reconcile_external_anchors(
+        self,
+        *,
+        authorization_token: str,
+        approval_authority: Any,
+        actor_id: str,
+        reason: str,
+    ) -> None:
+        """Recover crash-window anchors only with an independently signed approval."""
+        payload, evidence_hash = self.recovery_binding(reason)
+        recovery_key = action_key("AUDIT-RECOVERY", "reconcile_audit_anchors", payload, "audit-protocol-v1")
+        approval = approval_authority.verify(
+            authorization_token,
+            expected_action_key=recovery_key,
+            policy_version="audit-recovery-v1",
+            evidence_hash=evidence_hash,
+        )
+        if approval["decision"] != ReviewDecision.APPROVE.value or approval["reviewer_id"] != actor_id:
+            raise PermissionError("audit recovery requires an entitled approval bound to the observed database heads")
         self._sync_action_anchor()
         with self._connect() as connection:
             row = connection.execute(
@@ -264,14 +296,22 @@ class ActionLedger:
             ).fetchone()
         if row is not None:
             self._write_system_anchor(str(row[0]))
+        elif self.system_head_path.exists():
+            self.system_head_path.unlink()
+        self.record_system_event(
+            "AUDIT_ANCHOR_RECOVERY",
+            actor_id,
+            {
+                "reason": reason,
+                "binding": payload,
+                "approval_sha256": hashlib.sha256(authorization_token.encode()).hexdigest(),
+            },
+        )
 
     def _require_integrity(self) -> None:
-        with self._connect() as connection:
-            has_actions = connection.execute("SELECT 1 FROM action_events LIMIT 1").fetchone() is not None
-            has_system = connection.execute("SELECT 1 FROM system_audit_events LIMIT 1").fetchone() is not None
-        if has_actions and not self.verify_event_chain():
+        if not self.verify_event_chain():
             raise RuntimeError("action audit chain failed closed")
-        if has_system and not self.verify_system_event_chain():
+        if not self.verify_system_event_chain():
             raise RuntimeError("system audit chain failed closed")
 
     def verify_system_event_chain(self) -> bool:

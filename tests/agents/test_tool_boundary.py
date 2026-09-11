@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from controlflow.agents.workflow import GovernedWorkflow, WorkflowConfig
 from controlflow.audit.ledger import ActionLedger
+from controlflow.authorization.identity import SessionIdentityProvider
 from controlflow.authorization.policy import LocalPolicyBackend
 from controlflow.hitl.approval import ApprovalAuthority
 from controlflow.schemas import IdentityContext, Severity
@@ -26,6 +27,10 @@ class FakeRisk:
 
     def predict_details(self, _row: pd.Series, *, calibrated: bool = True) -> tuple[np.ndarray, float]:
         return np.asarray([0.7, 0.2, 0.09, 0.01]), 0.1
+
+
+def _sessions(*units: str) -> tuple[SessionIdentityProvider, dict[str, str]]:
+    return SessionIdentityProvider.issue_for_business_units(set(units))
 
 
 def test_exact_identifier_is_not_oracle_injected_after_retrieval_miss(
@@ -46,12 +51,14 @@ def test_exact_identifier_is_not_oracle_injected_after_retrieval_miss(
         ]
     )
     training = pd.DataFrame([{"case_id": "train", "business_unit": "consumer"}])
+    provider, credentials = _sessions("consumer")
     workflow = GovernedWorkflow(
         training,
         controls,
         ActionLedger(tmp_path / "miss.sqlite"),
         ApprovalAuthority(b"secret"),
         risk_service=FakeRisk(),  # type: ignore[arg-type]
+        identity_provider=provider,
     )
     row = pd.Series(
         {
@@ -64,7 +71,7 @@ def test_exact_identifier_is_not_oracle_injected_after_retrieval_miss(
         }
     )
     monkeypatch.setattr("controlflow.retrieval.core.BM25Retriever.search", lambda *_: [])
-    token = workflow.session_token_for_scope("consumer")
+    token = credentials["consumer"]
     evidence, _ = workflow._evidence(row, WorkflowConfig(reranker=False), workflow.identity(token))
     assert "AC-2" not in {item.evidence_id for item in evidence}
 
@@ -82,18 +89,28 @@ def test_authenticated_identity_is_immutable_when_case_scope_is_tampered(tmp_pat
             }
         ]
     )
+    provider, credentials = _sessions("consumer", "wealth")
     workflow = GovernedWorkflow(
         training,
         controls,
         ActionLedger(tmp_path / "identity.sqlite"),
         ApprovalAuthority(b"secret"),
         risk_service=FakeRisk(),  # type: ignore[arg-type]
+        identity_provider=provider,
     )
-    token = workflow.session_token_for_scope("consumer")
+    token = credentials["consumer"]
     tampered = training.iloc[0].copy()
     tampered["business_unit"] = "wealth"
     assert workflow.identity(token).business_unit == "consumer"
-    assert workflow.identity(token).session_id == token
+    assert workflow.identity(token).session_id != token
+    with pytest.raises(PermissionError):
+        workflow.context_for_llm(tampered, WorkflowConfig(reranker=False), session_token=token)
+    with pytest.raises(PermissionError):
+        workflow.execute(tampered, WorkflowConfig(retrieval=False), ("LOW", "AUTO", True), session_token=token)
+    with pytest.raises(PermissionError):
+        workflow.execute(
+            training.iloc[0], WorkflowConfig(retrieval=False), ("LOW", "AUTO", True), session_token="forged"
+        )
 
 
 def test_all_read_tool_outputs_enter_llm_context(tmp_path: Path) -> None:
@@ -109,12 +126,14 @@ def test_all_read_tool_outputs_enter_llm_context(tmp_path: Path) -> None:
             }
         ]
     )
+    provider, credentials = _sessions("consumer")
     workflow = GovernedWorkflow(
         training,
         controls,
         ActionLedger(tmp_path / "context.sqlite"),
         ApprovalAuthority(b"secret"),
         risk_service=FakeRisk(),  # type: ignore[arg-type]
+        identity_provider=provider,
     )
     row = training.iloc[0].copy()
     row["case_id"] = "current"
@@ -123,7 +142,7 @@ def test_all_read_tool_outputs_enter_llm_context(tmp_path: Path) -> None:
     row["future_failures"] = 0
     row["repeat_count"] = 1
     row["data_sensitivity"] = 0
-    token = workflow.session_token_for_scope("consumer")
+    token = credentials["consumer"]
     context = json.loads(workflow.context_for_llm(row, WorkflowConfig(reranker=False), session_token=token))
     assert {
         "search_cases",

@@ -11,6 +11,7 @@ import pandas as pd
 from controlflow.agents.durable import DurableWorkflowRunner, InjectedWorkflowCrash
 from controlflow.agents.workflow import GovernedWorkflow, WorkflowConfig
 from controlflow.audit.ledger import ActionLedger
+from controlflow.authorization.identity import SessionIdentityProvider
 from controlflow.core.state import ProjectPaths, atomic_write_json
 from controlflow.hitl.approval import ApprovalAuthority
 from controlflow.schemas import HumanDecision, ReviewDecision
@@ -31,11 +32,15 @@ def main() -> None:
         frame = pd.read_parquet(paths.root / "data/silver/synthetic_cases_development.parquet")
         row = frame.loc[frame.case_id.eq(args.case_id)].iloc[0]
         controls = pd.read_parquet(paths.root / "data/staging/nist_controls_raw.parquet")
+        identity_provider, credentials = SessionIdentityProvider.issue_for_business_units(
+            set(frame["business_unit"].astype(str))
+        )
         workflow = GovernedWorkflow(
             frame,
             controls,
             ActionLedger(Path(args.ledger)),
             ApprovalAuthority(secrets.token_bytes(32)),
+            identity_provider=identity_provider,
         )
         config = WorkflowConfig(
             retrieval=False,
@@ -48,7 +53,13 @@ def main() -> None:
             hitl=False,
         )
         try:
-            DurableWorkflowRunner(workflow, Path(args.path)).run(row, config, ("LOW", "AUTO", True), fault=args.fault)
+            DurableWorkflowRunner(workflow, Path(args.path)).run(
+                row,
+                config,
+                ("LOW", "AUTO", True),
+                session_token=credentials[str(row.business_unit)],
+                fault=args.fault,
+            )
         except InjectedWorkflowCrash:
             os._exit(91)
         raise RuntimeError("durable fault was not injected")

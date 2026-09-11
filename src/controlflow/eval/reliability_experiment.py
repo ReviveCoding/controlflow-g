@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from controlflow.agents.durable import DurableWorkflowRunner
 from controlflow.agents.workflow import GovernedWorkflow, WorkflowConfig
 from controlflow.audit.ledger import ActionLedger
+from controlflow.authorization.identity import SessionIdentityProvider
 from controlflow.authorization.policy import LocalPolicyBackend
 from controlflow.core.state import PhaseRun, ProjectPaths, canonical_json, utc_now
 from controlflow.hitl.approval import ApprovalAuthority
@@ -104,7 +105,7 @@ def _tool_fault(kind: str, tool_name: str = "probe") -> tuple[bool, int]:
 
 def run() -> str:
     paths = ProjectPaths.discover()
-    ledger = ActionLedger(paths.root / "artifacts/reliability_action_ledger_v6.sqlite")
+    ledger = ActionLedger(paths.root / "artifacts/reliability_action_ledger_v8.sqlite")
     authority = ApprovalAuthority(
         secrets.token_bytes(32), reviewer_entitlements={"reviewer": ("Risk Manager", "enterprise")}
     )
@@ -159,7 +160,7 @@ def run() -> str:
                 detected, injected, status = recovery, True, "ok"
             elif failure in {"agent crash", "partial pipeline failure", "checkpoint recovery"}:
                 checkpoint = paths.root / f"build/fault-checkpoint-{index}.json"
-                workflow_ledger = paths.root / f"artifacts/reliability_workflow_v6_{index}.sqlite"
+                workflow_ledger = paths.root / f"artifacts/reliability_workflow_v8_{index}.sqlite"
                 process = subprocess.run(
                     [
                         sys.executable,
@@ -176,16 +177,21 @@ def run() -> str:
                     check=False,
                     timeout=20,
                 )
+                identity_provider, credentials = SessionIdentityProvider.issue_for_business_units(
+                    set(development["business_unit"].astype(str))
+                )
                 resumed_workflow = GovernedWorkflow(
                     development,
                     controls,
                     ActionLedger(workflow_ledger),
                     ApprovalAuthority(secrets.token_bytes(32)),
+                    identity_provider=identity_provider,
                 )
                 resumed = DurableWorkflowRunner(resumed_workflow, checkpoint).resume(
                     recovery_case,
                     recovery_config,
                     ("LOW", "AUTO", True),
+                    session_token=credentials[str(recovery_case.business_unit)],
                 )
                 with ActionLedger(workflow_ledger)._connect() as connection:
                     executed_count = int(

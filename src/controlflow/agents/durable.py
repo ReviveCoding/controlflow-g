@@ -32,6 +32,7 @@ class DurableWorkflowRunner:
         config: WorkflowConfig,
         prediction: tuple[str, str, bool],
         *,
+        session_token: str,
         fault: str | None = None,
     ) -> WorkflowTrace:
         atomic_write_json(
@@ -40,8 +41,7 @@ class DurableWorkflowRunner:
         )
         if fault == "before_execute":
             raise InjectedWorkflowCrash("injected crash before workflow execution")
-        token = self.workflow.session_token_for_scope(str(row.business_unit))
-        trace = self.workflow.execute(row, config, prediction, session_token=token)
+        trace = self.workflow.execute(row, config, prediction, session_token=session_token)
         if fault == "after_execute_before_checkpoint":
             raise InjectedWorkflowCrash("injected crash after execution before checkpoint commit")
         self._complete(trace)
@@ -52,17 +52,28 @@ class DurableWorkflowRunner:
         row: pd.Series,
         config: WorkflowConfig,
         prediction: tuple[str, str, bool],
+        *,
+        session_token: str,
+        recovery_approval: tuple[object, str, str, str] | None = None,
     ) -> WorkflowTrace:
         # Explicit recovery reconciles a committed audit event whose external
         # signed checkpoint could not be exported before process death.
-        self.workflow.ledger.reconcile_external_anchors()
+        if not self.workflow.ledger.verify_event_chain() or not self.workflow.ledger.verify_system_event_chain():
+            if recovery_approval is None:
+                raise RuntimeError("audit recovery requires a separately supplied operator approval")
+            authority, token, actor_id, reason = recovery_approval
+            self.workflow.ledger.reconcile_external_anchors(
+                authorization_token=token,
+                approval_authority=authority,
+                actor_id=actor_id,
+                reason=reason,
+            )
         state: dict[str, Any] = json.loads(self.checkpoint.read_text(encoding="utf-8"))
         if state.get("case_id") != str(row.case_id):
             raise ValueError("checkpoint belongs to another case")
         if state.get("status") == "COMPLETE":
             return WorkflowTrace(**state["trace"])
-        token = self.workflow.session_token_for_scope(str(row.business_unit))
-        trace = self.workflow.execute(row, config, prediction, session_token=token)
+        trace = self.workflow.execute(row, config, prediction, session_token=session_token)
         self._complete(trace)
         return trace
 

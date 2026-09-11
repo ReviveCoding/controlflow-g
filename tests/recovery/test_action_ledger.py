@@ -10,6 +10,31 @@ from controlflow.hitl.approval import ApprovalAuthority, InvalidApproval
 from controlflow.schemas import HumanDecision, ProposedAction, ReviewDecision
 
 
+def _approve_recovery(ledger: ActionLedger, reason: str = "diagnosed crash window") -> None:
+    authority = ApprovalAuthority(
+        b"recovery-secret", reviewer_entitlements={"recovery-reviewer": ("Risk Manager", "enterprise")}
+    )
+    payload, evidence_hash = ledger.recovery_binding(reason)
+    token = authority.issue(
+        case_id="AUDIT-RECOVERY",
+        action_type="reconcile_audit_anchors",
+        payload=payload,
+        workflow_version="audit-protocol-v1",
+        reviewer_id="recovery-reviewer",
+        reviewer_role="Risk Manager",
+        reviewer_scope="enterprise",
+        decision=ReviewDecision.APPROVE,
+        policy_version="audit-recovery-v1",
+        evidence_hash=evidence_hash,
+    )
+    ledger.reconcile_external_anchors(
+        authorization_token=token,
+        approval_authority=authority,
+        actor_id="recovery-reviewer",
+        reason=reason,
+    )
+
+
 def test_duplicate_action_executes_once(tmp_path: Path) -> None:
     ledger = ActionLedger(tmp_path / "ledger.sqlite")
     kwargs = {
@@ -123,6 +148,34 @@ def test_audit_anchor_detects_truncation(tmp_path: Path) -> None:
     with ledger._connect() as connection:
         connection.execute("DELETE FROM action_events")
     assert not ledger.verify_event_chain()
+    authority = ApprovalAuthority(b"action-secret")
+    arguments = dict(case_id="new-case", action_type="case_update", payload={"status": "closed"}, workflow_version="v1")
+    token = authority.issue_system(
+        **arguments,
+        policy_version="local-policy-v1",
+        evidence_hash="ev",
+        risk_tier=1,
+        authorization_outcome="ALLOW",
+    )
+    with pytest.raises(RuntimeError, match="audit chain failed closed"):
+        ledger.execute_simulated(
+            **arguments, authorization_token=token, approval_authority=authority, evidence_hash="ev"
+        )
+
+
+def test_deleted_action_anchor_is_not_resigned_on_reopen(tmp_path: Path) -> None:
+    path = tmp_path / "deleted-anchor.sqlite"
+    ledger = ActionLedger(path)
+    ledger.request_review(
+        case_id="case-anchor", action_type="case_update", payload={"status": "pending"}, workflow_version="v1"
+    )
+    ledger.head_path.unlink()
+    reopened = ActionLedger(path)
+    assert not reopened.verify_event_chain()
+    with pytest.raises(RuntimeError, match="audit chain failed closed"):
+        reopened.request_review(
+            case_id="case-new", action_type="case_update", payload={"status": "pending"}, workflow_version="v1"
+        )
 
 
 def test_audit_chain_detects_materialized_action_mutation(tmp_path: Path) -> None:
@@ -162,8 +215,13 @@ def test_corrupt_external_anchor_fails_closed_until_explicit_reconciliation(tmp_
     ledger.system_head_path.write_text('{"event_hash":"bad","signature":"bad"}', encoding="utf-8")
     with pytest.raises(RuntimeError, match="audit chain failed closed"):
         ledger.record_system_event("TOOL_CALL", "analyst", {"tool": "search_cases"})
-    ledger.reconcile_external_anchors()
+    _approve_recovery(ledger)
     assert ledger.verify_system_event_chain()
+    with ledger._connect() as connection:
+        recovered = connection.execute(
+            "SELECT 1 FROM system_audit_events WHERE event_type='AUDIT_ANCHOR_RECOVERY'"
+        ).fetchone()
+    assert recovered is not None
 
 
 def test_concurrent_system_events_preserve_external_anchor_order(tmp_path: Path) -> None:

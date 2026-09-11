@@ -16,6 +16,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from controlflow.agents.workflow import GovernedWorkflow, WorkflowConfig, WorkflowTrace
 from controlflow.audit.ledger import ActionLedger
+from controlflow.authorization.identity import SessionIdentityProvider
 from controlflow.core.resources import GpuSemaphore
 from controlflow.core.state import PhaseRun, ProjectPaths, canonical_json, sha256_file, utc_now
 from controlflow.data.splits import load_split
@@ -318,7 +319,7 @@ def evaluate_trace(name: str, row: pd.Series, trace: WorkflowTrace, usage: dict[
         "injection_detected": trace.injection_detected,
         "latency_seconds": trace.latency_seconds + usage["llm_latency_seconds"],
         "tokens": usage["input_tokens"] + usage["output_tokens"],
-        "gpu_seconds": usage["llm_latency_seconds"],
+        "gpu_seconds": usage["llm_latency_seconds"] + trace.context_gpu_seconds,
         "architecture_mode": usage.get("architecture_mode", "rules"),
         "raw_output_hash": usage.get("raw_output_hash", "none"),
         "plan_hash": usage.get("plan_hash", "none"),
@@ -349,16 +350,20 @@ def run_agents(only: frozenset[str] | None = None) -> str:
     controls = pd.read_parquet(paths.root / "data/staging/nist_controls_raw.parquet")
     regulations = pd.read_parquet(paths.root / "data/staging/cfr_raw.parquet")
     risk_service = joblib.load(paths.root / "artifacts/calibrated_risk_service.joblib")
+    identity_provider, session_credentials = SessionIdentityProvider.issue_for_business_units(
+        set(frame["business_unit"].astype(str))
+    )
     workflows = {
         name: GovernedWorkflow(
             train,
             controls,
-            ActionLedger(paths.root / f"artifacts/agent_{name}_action_ledger_protocol5.sqlite"),
+            ActionLedger(paths.root / f"artifacts/agent_{name}_action_ledger_protocol7.sqlite"),
             ApprovalAuthority(secrets.token_bytes(32)),
             risk_service=risk_service,
             state_dir=paths.root / f"artifacts/graph_state_v3/{name}",
             regulations=regulations,
             require_cuda_retrieval=True,
+            identity_provider=identity_provider,
         )
         for name in CONFIGS
     }
@@ -375,7 +380,7 @@ def run_agents(only: frozenset[str] | None = None) -> str:
     if only is None or name in only:
         for _, row in cases.iterrows():
             prediction = _rule_prediction(row)
-            session_token = workflow.session_token_for_scope(str(row.business_unit))
+            session_token = session_credentials[str(row.business_unit)]
             traces.append(
                 evaluate_trace(
                     name,
@@ -392,7 +397,7 @@ def run_agents(only: frozenset[str] | None = None) -> str:
                 config = CONFIGS[name]
                 workflow = workflows[name]
                 for _, row in cases.iterrows():
-                    session_token = workflow.session_token_for_scope(str(row.business_unit))
+                    session_token = session_credentials[str(row.business_unit)]
                     mode = (
                         "react"
                         if name == "AG3_unrestricted_react"
@@ -445,7 +450,7 @@ def run_agents(only: frozenset[str] | None = None) -> str:
             workflow = workflows["AG6_controlflow_g"]
             if only is None or "AG6_controlflow_g" in only:
                 for _, row in cases.iterrows():
-                    session_token = workflow.session_token_for_scope(str(row.business_unit))
+                    session_token = session_credentials[str(row.business_unit)]
                     prediction = _predict_one(
                         str(row.narrative), workflow.context_for_llm(row, config, session_token=session_token)
                     )
