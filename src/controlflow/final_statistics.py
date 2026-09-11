@@ -14,7 +14,7 @@ def run(seed: int = 17, repeats: int = 10_000) -> str:
     trace_path = paths.root / "results/final_test_traces.parquet"
     traces = pd.read_parquet(trace_path)
     pivot = traces.pivot(index="case_id", columns="experiment_id", values="safe_task_completion").astype(bool)
-    baseline = pivot["agent-AG0_rules_templates_final"].to_numpy()
+    baseline = pivot["agent-AG3_unrestricted_react_final"].to_numpy()
     candidate = pivot["agent-AG6_controlflow_g_final"].to_numpy()
     rng = np.random.default_rng(seed)
     indices = rng.integers(0, len(pivot), size=(repeats, len(pivot)))
@@ -35,7 +35,7 @@ def run(seed: int = 17, repeats: int = 10_000) -> str:
         "baseline_only_successes": discordant_baseline,
     }
     row = {
-        "experiment_id": "final-paired-AG6-vs-AG0",
+        "experiment_id": "final-paired-AG6-vs-AG3",
         "config_hash": sha256_file(paths.root / "state/freeze_manifest.json"),
         "dataset_hash": sha256_file(trace_path),
         "split_identifier": "locked_final_test",

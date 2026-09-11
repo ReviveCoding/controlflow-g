@@ -31,3 +31,9 @@ def test_enforces_allowlist_and_limit() -> None:
 def test_rejects_allowlisted_basename_in_unauthorized_schema() -> None:
     with pytest.raises(UnsafeQuery):
         validate_readonly_sql("SELECT * FROM secret_catalog.fact_case", frozenset({"gold.fact_case"}))
+
+
+@pytest.mark.parametrize("function", ["REFLECT(a,b,c)", "JAVA_METHOD(a,b,c)", "INPUT_FILE_NAME()"])
+def test_rejects_denied_spark_functions(function: str) -> None:
+    with pytest.raises(UnsafeQuery):
+        validate_readonly_sql(f"SELECT {function} FROM gold.fact_case", frozenset({"gold.fact_case"}))

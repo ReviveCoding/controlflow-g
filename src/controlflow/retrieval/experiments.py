@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Callable
 from datetime import UTC, datetime
 
@@ -71,6 +72,29 @@ def _item(
 def _build(paths: ProjectPaths) -> tuple[list[TemporalEvidence], list[RetrievalCase]]:
     controls = pd.read_parquet(paths.root / "data/staging/nist_controls_raw.parquet")
     corpus = [_item(str(row.control_id), f"{row.title}. {row.description}") for row in controls.itertuples()]
+    cfr = pd.read_parquet(paths.root / "data/staging/cfr_raw.parquet").sort_values(
+        ["business_valid_from", "regulation_id"]
+    )
+    cfr_cases: list[RetrievalCase] = []
+    seen_section_versions: set[tuple[str, int]] = set()
+    per_year: dict[int, int] = {}
+    for row in cfr.itertuples():
+        text = str(row.text)
+        section_match = re.match(r"§\s*([0-9]+(?:\.[0-9A-Za-z-]+)?)", text)
+        year = pd.Timestamp(row.business_valid_from).year
+        if not section_match or (section_match.group(1), year) in seen_section_versions:
+            continue
+        if per_year.get(year, 0) >= 300:
+            continue
+        section = section_match.group(1)
+        seen_section_versions.add((section, year))
+        per_year[year] = per_year.get(year, 0) + 1
+        evidence_id = f"12CFR-{section}:{year}"
+        corpus.append(_item(evidence_id, text[:1600], source="CFR", start=year, end=year + 1))
+        if year == 2025 and len(cfr_cases) < 20:
+            query = text.split(".", 1)[-1].strip()[:300]
+            if query:
+                cfr_cases.append(RetrievalCase(f"CFR-{section}-2025", query, frozenset({evidence_id})))
     sec = pd.read_parquet(paths.root / "data/staging/sec_filings_raw.parquet")
     corpus.extend(
         _item(f"SEC-{index}", str(row.text)[:800], source="SEC") for index, row in enumerate(sec.itertuples())
@@ -79,11 +103,29 @@ def _build(paths: ProjectPaths) -> tuple[list[TemporalEvidence], list[RetrievalC
         corpus.append(_item(f"{identifier}:stale", query + " superseded version", start=2020, end=2024))
         corpus.append(_item(f"{identifier}:restricted", query + " confidential appendix", classification=5))
     cases = [RetrievalCase(f"RQ-{identifier}", query, frozenset({identifier})) for identifier, query in QUERIES.items()]
+    assessments = pd.read_parquet(paths.root / "data/staging/nist_assessments_raw.parquet")
+    available = set(controls.control_id.astype(str))
+    seen_queries = set(QUERIES.values())
+    for row in assessments.sort_values("sort_as").itertuples():
+        raw_identifier = str(row.identifier)
+        match = re.fullmatch(r"([A-Z]{2})-(\d{2})", raw_identifier)
+        query = str(row.assessment_objective)
+        if not match or not query or query == "<NA>":
+            continue
+        identifier = f"{match.group(1)}-{int(match.group(2))}"
+        if identifier not in available or query in seen_queries:
+            continue
+        cases.append(RetrievalCase(f"AO-{identifier}", query, frozenset({identifier})))
+        seen_queries.add(query)
+        if len(cases) >= 100:
+            break
+    cases.extend(cfr_cases)
     return corpus, cases
 
 
 def _safety(retriever: Adapter | KeywordRetriever | BM25Retriever, cases: list[RetrievalCase]) -> dict[str, float]:
     base = evaluate_retriever(retriever, cases)
+    base["sample_size"] = float(len(cases))
     hits = [hit for case in cases for hit in retriever.search(case.query, 10)]
     base.update(
         {
@@ -110,7 +152,7 @@ def _record(name: str, metrics: dict[str, float], source_hash: str, runtime: str
             canonical_json({"name": name, "embed": EMBED_REVISION, "rerank": RERANK_REVISION})
         ).hexdigest(),
         "dataset_hash": source_hash,
-        "split_identifier": "independent_queries_v2",
+        "split_identifier": "independent_nist_assessment_and_cfr_queries_v3",
         "seed": 17,
         "hardware_runtime": runtime,
         "timestamp": utc_now(),
@@ -122,6 +164,16 @@ def _record(name: str, metrics: dict[str, float], source_hash: str, runtime: str
 def run() -> str:
     paths = ProjectPaths.discover()
     source = paths.root / "data/staging/nist_controls_raw.parquet"
+    dataset_hash = hashlib.sha256(
+        canonical_json(
+            [
+                sha256_file(source),
+                sha256_file(paths.root / "data/staging/nist_assessments_raw.parquet"),
+                sha256_file(paths.root / "data/staging/cfr_raw.parquet"),
+                sha256_file(paths.root / "data/staging/sec_filings_raw.parquet"),
+            ]
+        )
+    ).hexdigest()
     corpus, cases = _build(paths)
     query_map = {case.query: index for index, case in enumerate(cases)}
     if not torch.cuda.is_available():
@@ -167,10 +219,10 @@ def run() -> str:
     keyword = KeywordRetriever(corpus)
     with PhaseRun("P14", paths) as phase:
         records = [
-            _record("R0_keyword", _safety(keyword, cases), sha256_file(source), "CPU"),
-            _record("R1_bm25", _safety(bm25, cases), sha256_file(source), "CPU"),
-            _record("R2_dense", _safety(dense, cases), sha256_file(source), f"CUDA:{device}"),
-            _record("R3_hybrid", _safety(hybrid, cases), sha256_file(source), "CPU+CUDA"),
+            _record("R0_keyword", _safety(keyword, cases), dataset_hash, "CPU"),
+            _record("R1_bm25", _safety(bm25, cases), dataset_hash, "CPU"),
+            _record("R2_dense", _safety(dense, cases), dataset_hash, f"CUDA:{device}"),
+            _record("R3_hybrid", _safety(hybrid, cases), dataset_hash, "CPU+CUDA"),
         ]
         target = paths.root / "results/retrieval.parquet"
         pd.DataFrame(records).to_parquet(target, index=False)
@@ -178,12 +230,12 @@ def run() -> str:
     event = datetime(2025, 1, 1, tzinfo=UTC)
     subsets = {
         "R4_hybrid_reranker": all_indices,
-        "R5_metadata": [i for i, x in enumerate(corpus) if x.source == "NIST"],
-        "R6_temporal": [i for i, x in enumerate(corpus) if x.source == "NIST" and x.valid_at(event, event)],
+        "R5_metadata": [i for i, x in enumerate(corpus) if x.source in {"NIST", "CFR"}],
+        "R6_temporal": [i for i, x in enumerate(corpus) if x.source in {"NIST", "CFR"} and x.valid_at(event, event)],
         "R7_authorized": [
             i
             for i, x in enumerate(corpus)
-            if x.source == "NIST"
+            if x.source in {"NIST", "CFR"}
             and x.valid_at(event, event)
             and x.classification <= 2
             and "Control Analyst" in x.authorized_roles
@@ -205,7 +257,9 @@ def run() -> str:
             ) -> list[SearchHit]:
                 hits = candidate.search(query, 20)
                 scores = model.predict(
-                    [(query, hit.evidence.text) for hit in hits], batch_size=64, convert_to_numpy=True
+                    [(query, hit.evidence.text) for hit in hits],  # type: ignore[arg-type]
+                    batch_size=64,
+                    convert_to_numpy=True,
                 )
                 order = np.argsort(scores)[::-1][:k]
                 return [
@@ -216,7 +270,7 @@ def run() -> str:
                 _record(
                     name,
                     _safety(Adapter(search), cases),
-                    sha256_file(source),
+                    dataset_hash,
                     f"CPU+CUDA:{next(reranker.model.parameters()).device}",
                 )
             )

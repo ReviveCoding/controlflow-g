@@ -15,6 +15,37 @@ import pandas as pd
 import pyarrow.parquet as pq
 
 from controlflow.core.state import PhaseRun, ProjectPaths, sha256_file, utc_now
+from controlflow.data.contracts import ColumnRule, QualityAction, SourceClass, validate_frame
+
+CONTRACTS = {
+    "nist_controls_raw": (
+        (
+            ColumnRule("control_id", "string"),
+            ColumnRule("family", "string"),
+            ColumnRule("title", "string"),
+            ColumnRule("description", "string"),
+            ColumnRule("relationship_count", "int64"),
+            ColumnRule("source_hash", "string"),
+            ColumnRule("ingested_at", "string"),
+        ),
+        "control_id",
+        SourceClass.STRICT,
+    ),
+    "nist_assessments_raw": ((ColumnRule("source_hash", "string"),), None, SourceClass.EVOLVING),
+    "cfpb_complaints_raw": ((ColumnRule("complaint_id", "string"),), "complaint_id", SourceClass.EVOLVING),
+    "cfr_raw": ((ColumnRule("regulation_id", "string"), ColumnRule("text", "string")), None, SourceClass.EVOLVING),
+    "sec_filings_raw": (
+        (ColumnRule("document_id", "string"), ColumnRule("text", "string")),
+        "document_id",
+        SourceClass.EVOLVING,
+    ),
+    "transactions_raw": (
+        (ColumnRule("transaction_id", "string"), ColumnRule("amount", "float64")),
+        "transaction_id",
+        SourceClass.EVOLVING,
+    ),
+    "control_events_raw": ((ColumnRule("event_id", "string"),), "event_id", SourceClass.EVOLVING),
+}
 
 
 def _write(frame: pd.DataFrame, path: Path) -> None:
@@ -206,11 +237,23 @@ def run(cfpb_rows: int = 20_000, transaction_rows: int = 100_000) -> Path:
                 item["table"]: item for item in json.loads(previous_manifest.read_text(encoding="utf-8"))["tables"]
             }
         for name, frame in tables.items():
+            rules, primary_key, source_class = CONTRACTS[name]
+            contract = validate_frame(
+                frame,
+                rules,
+                source_class=source_class,
+                invalid_action=QualityAction.QUARANTINE,
+                primary_key=primary_key,
+            )
+            frame = contract.accepted
+            quarantine = outputs / "quarantine" / f"{name}.parquet"
+            _write(contract.quarantined, quarantine)
             target = outputs / f"{name}.parquet"
             parquet = pq.ParquetFile(target) if target.exists() else None
             existing_rows = parquet.metadata.num_rows if parquet is not None else None
-            incompatible_timestamp = bool(parquet) and any(
-                getattr(field.type, "unit", None) == "ns" for field in parquet.schema_arrow
+            parquet_schema = parquet.schema_arrow if parquet is not None else None
+            incompatible_timestamp = parquet_schema is not None and any(
+                getattr(field.type, "unit", None) == "ns" for field in parquet_schema
             )
             source_hashes = sorted(
                 str(value) for value in frame.get("source_hash", pd.Series(dtype=str)).dropna().unique()
@@ -245,9 +288,12 @@ def run(cfpb_rows: int = 20_000, transaction_rows: int = 100_000) -> Path:
                     "path": target.relative_to(root).as_posix(),
                     "input_fingerprint": input_fingerprint,
                     "transform_version": 2 if name == "cfr_raw" else 1,
+                    "contract_metrics": contract.metrics,
+                    "quarantine_path": quarantine.relative_to(root).as_posix(),
                 }
             )
             phase.register(target, "staging_table")
+            phase.register(quarantine, "quarantine_table")
         manifest = outputs / "manifest.json"
         manifest.write_text(
             json.dumps(

@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
+import json
+import secrets
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from controlflow.core.state import canonical_json, utc_now
+from controlflow.core.state import atomic_write_json, canonical_json, utc_now
+from controlflow.schemas import HumanDecision, ReviewDecision
 
 
 def action_key(case_id: str, action_type: str, payload: dict[str, Any], workflow_version: str) -> str:
@@ -33,6 +37,10 @@ class ActionLedger:
     def __init__(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         self.path = path
+        self.key_path = path.with_suffix(".audit.key")
+        self.head_path = path.with_suffix(".audit.head.json")
+        if not self.key_path.exists():
+            self.key_path.write_bytes(secrets.token_bytes(32))
         with self._connect() as connection:
             connection.execute(
                 """
@@ -59,6 +67,13 @@ class ActionLedger:
                 payload_hash TEXT NOT NULL, previous_hash TEXT NOT NULL, event_hash TEXT NOT NULL UNIQUE
                 )"""
             )
+            head = connection.execute("SELECT event_hash FROM action_events ORDER BY event_id DESC LIMIT 1").fetchone()
+            if head and not self.head_path.exists():
+                self._write_anchor(str(head[0]))
+
+    def _write_anchor(self, event_hash: str) -> None:
+        signature = hmac.new(self.key_path.read_bytes(), event_hash.encode(), hashlib.sha256).hexdigest()
+        atomic_write_json(self.head_path, {"event_hash": event_hash, "signature": signature})
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, isolation_level=None, timeout=10)
@@ -66,9 +81,8 @@ class ActionLedger:
         connection.execute("PRAGMA synchronous=FULL")
         return connection
 
-    @staticmethod
     def _append_event(
-        connection: sqlite3.Connection, *, action_id: int, event_type: str, actor_id: str, payload_hash: str
+        self, connection: sqlite3.Connection, *, action_id: int, event_type: str, actor_id: str, payload_hash: str
     ) -> None:
         previous = connection.execute("SELECT event_hash FROM action_events ORDER BY event_id DESC LIMIT 1").fetchone()
         previous_hash = previous[0] if previous else "GENESIS"
@@ -91,6 +105,7 @@ class ActionLedger:
             "VALUES (?,?,?,?,?,?,?)",
             (action_id, event_type, actor_id, event_at, payload_hash, previous_hash, event_hash),
         )
+        self._write_anchor(event_hash)
 
     def verify_event_chain(self) -> bool:
         with self._connect() as connection:
@@ -110,7 +125,35 @@ class ActionLedger:
                 if row[5] != previous or hashlib.sha256(canonical_json(body)).hexdigest() != row[6]:
                     return False
                 previous = row[6]
-        return True
+        if previous == "GENESIS" or not self.head_path.exists():
+            return previous == "GENESIS" and not self.head_path.exists()
+        anchor = json.loads(self.head_path.read_text(encoding="utf-8"))
+        expected = hmac.new(self.key_path.read_bytes(), previous.encode(), hashlib.sha256).hexdigest()
+        return anchor.get("event_hash") == previous and hmac.compare_digest(anchor.get("signature", ""), expected)
+
+    def rollback(self, action_id: int, *, actor_id: str, reason: str) -> ActionReceipt:
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT idempotency_key,status,result_hash FROM action_ledger WHERE action_id=?", (action_id,)
+            ).fetchone()
+            if row is None or row[1] != "EXECUTED":
+                connection.execute("ROLLBACK")
+                raise ValueError("only an executed action can be rolled back")
+            rollback_id = hashlib.sha256(canonical_json({"action_id": action_id, "reason": reason})).hexdigest()
+            connection.execute(
+                "UPDATE action_ledger SET status='ROLLED_BACK',rollback_id=? WHERE action_id=?",
+                (rollback_id, action_id),
+            )
+            self._append_event(
+                connection,
+                action_id=action_id,
+                event_type="ROLLED_BACK",
+                actor_id=actor_id,
+                payload_hash=rollback_id,
+            )
+            connection.execute("COMMIT")
+        return ActionReceipt(action_id, str(row[0]), "ROLLED_BACK", executed=False)
 
     def execute_simulated(
         self,
@@ -135,9 +178,20 @@ class ActionLedger:
             approval = approval_authority.verify(
                 authorization_token, expected_action_key=key, policy_version=policy_version, evidence_hash=evidence_hash
             )
+            if approval["decision"] not in {ReviewDecision.APPROVE.value, "SYSTEM_AUTO"}:
+                connection.execute("ROLLBACK")
+                raise PermissionError("only an APPROVE or bounded system decision can execute an action")
             reviewer_id = str(approval["reviewer_id"])
             if row is not None:
                 if row[1] == "PENDING_REVIEW":
+                    approved = connection.execute(
+                        "SELECT 1 FROM action_events WHERE action_id=? AND event_type='REVIEW_APPROVED' "
+                        "AND actor_id=? ORDER BY event_id DESC LIMIT 1",
+                        (row[0], reviewer_id),
+                    ).fetchone()
+                    if reviewer_id != "SYSTEM_AUTO" and approved is None:
+                        connection.execute("ROLLBACK")
+                        raise PermissionError("no persisted entitled approval for this action")
                     result_hash = hashlib.sha256(canonical_json({"simulated": True, "payload": payload})).hexdigest()
                     connection.execute(
                         """UPDATE action_ledger SET status='EXECUTED', approved_at=?, executed_at=?, result_hash=?
@@ -155,6 +209,9 @@ class ActionLedger:
                     return ActionReceipt(row[0], key, "EXECUTED", executed=True)
                 connection.execute("COMMIT")
                 return ActionReceipt(row[0], key, row[1], executed=False)
+            if reviewer_id != "SYSTEM_AUTO":
+                connection.execute("ROLLBACK")
+                raise PermissionError("human approval requires a persisted PENDING_REVIEW request")
             result_hash = hashlib.sha256(canonical_json({"simulated": True, "payload": payload})).hexdigest()
             connection.execute(
                 """INSERT INTO action_ledger
@@ -206,3 +263,76 @@ class ActionLedger:
             )
             connection.execute("COMMIT")
         return ActionReceipt(action_id, key, "PENDING_REVIEW", executed=False)
+
+    def record_review(
+        self,
+        action_id: int,
+        decision: HumanDecision,
+        *,
+        authorization_token: str,
+        approval_authority: Any,
+        policy_version: str,
+        evidence_hash: str,
+    ) -> ActionReceipt:
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT idempotency_key,status,case_id,workflow_version FROM action_ledger WHERE action_id=?",
+                (action_id,),
+            ).fetchone()
+            if row is None or row[1] != "PENDING_REVIEW":
+                connection.execute("ROLLBACK")
+                raise ValueError("review decision requires a pending action")
+            if decision.bound_action_hash != row[0]:
+                connection.execute("ROLLBACK")
+                raise PermissionError("review decision is bound to a different action")
+            approval = approval_authority.verify(
+                authorization_token,
+                expected_action_key=str(row[0]),
+                policy_version=policy_version,
+                evidence_hash=evidence_hash,
+            )
+            if (
+                approval["reviewer_id"] != decision.reviewer_id
+                or approval["reviewer_role"] != decision.reviewer_role
+                or approval["reviewer_scope"] != decision.reviewer_scope
+                or approval["decision"] != decision.decision.value
+            ):
+                connection.execute("ROLLBACK")
+                raise PermissionError("persisted decision does not match signed reviewer authorization")
+            event_type = {
+                ReviewDecision.APPROVE: "REVIEW_APPROVED",
+                ReviewDecision.EDIT: "REVIEW_EDITED",
+                ReviewDecision.REJECT: "REVIEW_REJECTED",
+            }[decision.decision]
+            next_status = "REJECTED" if decision.decision is ReviewDecision.REJECT else "PENDING_REVIEW"
+            resulting_key = str(row[0])
+            if decision.decision is ReviewDecision.EDIT:
+                if decision.edited_action is None:
+                    connection.execute("ROLLBACK")
+                    raise ValueError("EDIT requires a typed edited action")
+                resulting_key = action_key(
+                    str(row[2]),
+                    decision.edited_action.action_type,
+                    decision.edited_action.payload,
+                    str(row[3]),
+                )
+                connection.execute(
+                    "UPDATE action_ledger SET idempotency_key=?,action_type=?,normalized_payload=? WHERE action_id=?",
+                    (
+                        resulting_key,
+                        decision.edited_action.action_type,
+                        canonical_json(decision.edited_action.payload).decode(),
+                        action_id,
+                    ),
+                )
+            connection.execute("UPDATE action_ledger SET status=? WHERE action_id=?", (next_status, action_id))
+            self._append_event(
+                connection,
+                action_id=action_id,
+                event_type=event_type,
+                actor_id=decision.reviewer_id,
+                payload_hash=hashlib.sha256(canonical_json(decision.model_dump(mode="json"))).hexdigest(),
+            )
+            connection.execute("COMMIT")
+        return ActionReceipt(action_id, resulting_key, next_status, executed=False)

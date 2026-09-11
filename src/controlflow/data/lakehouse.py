@@ -24,6 +24,7 @@ def delta_session(app_name: str, warehouse: Path) -> Any:
         .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
         .config("spark.sql.warehouse.dir", str(warehouse))
         .config("spark.sql.shuffle.partitions", "4")
+        .config("spark.sql.legacy.parquet.nanosAsLong", "true")
         .config("spark.databricks.delta.snapshotPartitions", "4")
         .config("spark.driver.memory", "2g")
     )

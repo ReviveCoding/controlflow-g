@@ -42,8 +42,11 @@ def run_label_efficiency(cases_path: Path, seed: int = 17) -> pd.DataFrame:
         for method in ("supervised_only", "pseudo_label", "iterative_self_training"):
             model = LogisticRegression(max_iter=1500, class_weight="balanced", random_state=seed)
             model.fit(x[labeled], y[labeled])
-            if method != "supervised_only" and len(unlabeled):
-                rounds = 1 if method == "pseudo_label" else 3
+            if method == "pseudo_label" and len(unlabeled):
+                pseudo = model.predict(x[unlabeled])
+                model.fit(np.row_stack([x[labeled], x[unlabeled]]), np.concatenate([y[labeled], pseudo]))
+            elif method == "iterative_self_training" and len(unlabeled):
+                rounds = 3
                 selected = labeled.copy()
                 pseudo_y = y[labeled].copy()
                 remaining = unlabeled.copy()

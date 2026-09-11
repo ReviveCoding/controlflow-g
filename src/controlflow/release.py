@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import subprocess
 from pathlib import Path
 from typing import Any, cast
@@ -15,6 +16,11 @@ from controlflow.core.state import PhaseRun, ProjectPaths, atomic_write_json, ca
 
 class FreezeViolation(RuntimeError):
     pass
+
+
+def freeze_identity_hash(manifest: dict[str, Any]) -> str:
+    identity = {key: value for key, value in manifest.items() if key not in {"freeze_hash", "created_at"}}
+    return hashlib.sha256(canonical_json(identity)).hexdigest()
 
 
 def _git_revision(paths: ProjectPaths) -> str:
@@ -49,6 +55,9 @@ def create_freeze() -> str:
         Path("data/silver/synthetic_cases_development.parquet"),
         Path("data/sealed/benchmark_master.parquet"),
         Path("data/sealed/locked_final_test.ids"),
+        Path("data/staging/nist_controls_raw.parquet"),
+        Path("results/agents.parquet"),
+        Path("results/security.parquet"),
         Path("artifacts/frozen_risk_service.joblib"),
     ]
     required.extend(path.relative_to(paths.root) for path in sorted((paths.root / "configs").rglob("*.yaml")))
@@ -57,21 +66,21 @@ def create_freeze() -> str:
         {"path": item.as_posix(), "sha256": sha256_file(paths.root / item), "bytes": (paths.root / item).stat().st_size}
         for item in required
     ]
-    payload: dict[str, Any] = {
+    identity: dict[str, Any] = {
         "schema_version": 1,
-        "created_at": utc_now(),
         "git_revision": _git_revision(paths),
         "candidate": "AG6_controlflow_g",
         "llm_model": "Qwen/Qwen2.5-0.5B-Instruct",
         "llm_revision": "7ae557604adf67be50417f59c2c2f167def9a775",
         "embedding_revision": "1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
-        "agent_graph_version": "agent-graph-v2",
+        "agent_graph_version": "agent-graph-v3",
         "authorization_policy_version": "local-policy-v1",
         "tool_schema_version": 1,
         "seeds": [17],
         "artifacts": entries,
     }
-    payload["freeze_hash"] = hashlib.sha256(canonical_json(payload)).hexdigest()
+    payload = {**identity, "created_at": utc_now()}
+    payload["freeze_hash"] = freeze_identity_hash(payload)
     target = paths.state / "freeze_manifest.json"
     atomic_write_json(target, payload)
     with PhaseRun("P25", paths) as phase:
@@ -87,14 +96,15 @@ def create_freeze() -> str:
 
 def verify_freeze(paths: ProjectPaths) -> dict[str, Any]:
     manifest = json.loads((paths.state / "freeze_manifest.json").read_text(encoding="utf-8"))
-    claimed = manifest.pop("freeze_hash")
-    actual = hashlib.sha256(canonical_json(manifest)).hexdigest()
-    manifest["freeze_hash"] = claimed
+    claimed = manifest["freeze_hash"]
+    actual = freeze_identity_hash(manifest)
     if claimed != actual:
         raise FreezeViolation("freeze manifest hash mismatch")
     for item in manifest["artifacts"]:
         if sha256_file(paths.root / item["path"]) != item["sha256"]:
             raise FreezeViolation(f"frozen artifact changed: {item['path']}")
+    if _git_revision(paths) != manifest["git_revision"]:
+        raise FreezeViolation("Git revision differs from frozen candidate")
     return cast(dict[str, Any], manifest)
 
 
@@ -115,7 +125,7 @@ def evaluate_release_gates(metrics: dict[str, float]) -> tuple[str, list[dict[st
     decisions = []
     for name, gate in config["gates"].items():
         value = metrics.get(name)
-        if value is None:
+        if value is None or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
             passed = False
         elif gate["operator"] == "eq":
             passed = value == gate["threshold"]
@@ -128,7 +138,17 @@ def evaluate_release_gates(metrics: dict[str, float]) -> tuple[str, list[dict[st
         decisions.append({"gate": name, "value": value, "passed": passed, **gate})
     zero_failure = any(not row["passed"] and row.get("tolerance") == "zero" for row in decisions)
     failures = sum(not row["passed"] for row in decisions)
-    decision = "NO_PROMOTE" if zero_failure or failures >= 2 else "CONDITIONAL_PROMOTE" if failures == 1 else "PROMOTE"
+    invalid = any(
+        row["value"] is None or not isinstance(row["value"], (int, float)) or not math.isfinite(float(row["value"]))
+        for row in decisions
+    )
+    decision = (
+        "NO_PROMOTE"
+        if invalid or zero_failure or failures >= 2
+        else "CONDITIONAL_PROMOTE"
+        if failures == 1
+        else "PROMOTE"
+    )
     return decision, decisions
 
 

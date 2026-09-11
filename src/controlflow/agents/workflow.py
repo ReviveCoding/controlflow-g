@@ -1,27 +1,68 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 
+import numpy as np
 import pandas as pd
+from pydantic import BaseModel, ConfigDict, ValidationError
 from sklearn.ensemble import IsolationForest
 from sklearn.pipeline import Pipeline
 
 from controlflow.audit.ledger import ActionLedger
 from controlflow.authorization.policy import LocalPolicyBackend, ToolPolicyInput
-from controlflow.core.state import canonical_json
+from controlflow.core.state import atomic_write_json, canonical_json
 from controlflow.hitl.approval import ApprovalAuthority
 from controlflow.modeling.supervised import LABELS, _preprocessor, _xy
 from controlflow.retrieval.core import BM25Retriever
-from controlflow.schemas import AgentState, IdentityContext, Severity, TemporalEvidence
+from controlflow.schemas import (
+    AgentState,
+    AnomalySignal,
+    Disposition,
+    FinalAgentOutput,
+    IdentityContext,
+    ProposedAction,
+    RiskPrediction,
+    Severity,
+    TemporalEvidence,
+)
+from controlflow.tools.registry import ToolRegistry, ToolSpec
 from controlflow.verification.claims import verify_claims
 
 CONTROL = re.compile(r"\b[A-Z]{2}-\d+(?:\.\d+)?\b")
 REGULATION = re.compile(r"\b12CFR-\d+\b")
-INJECTION = re.compile(r"ignore (?:all )?previous|unrestricted tool|role=administrator", re.I)
+INJECTION = re.compile(
+    r"ignore\s+(?:all\s+)?previous|disregard\s+(?:all\s+)?earlier|override\s+(?:the\s+)?system|"
+    r"unrestricted\s+tool|role\s*=\s*administrator|i\s*g\s*n\s*o\s*r\s*e",
+    re.I,
+)
+
+
+class EvidenceSearchInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    query: str
+
+
+class EvidenceSearchOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    evidence_ids: list[str]
+
+
+class ActionInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    case_id: str
+    status: str
+
+
+class ActionOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    executed: bool
+    action_id: int
 
 
 @dataclass(frozen=True)
@@ -59,15 +100,19 @@ class RiskService:
         self.calibrator: object | None = None
         self.review_threshold = 0.8
 
-    def predict(self, row: pd.Series, *, calibrated: bool = True) -> tuple[str, float, float]:
+    def predict_details(self, row: pd.Series, *, calibrated: bool = True) -> tuple[np.ndarray, float]:
         probability = self.model.predict_proba(pd.DataFrame([row]))[0]
         if calibrated and self.calibrator is not None:
             probability = self.calibrator.predict(probability.reshape(1, -1))[0]  # type: ignore[attr-defined]
         numeric = pd.DataFrame([row])[["amount", "repeat_count", "historical_failures", "data_sensitivity"]]
+        return probability, float(-self.anomaly.score_samples(numeric)[0])
+
+    def predict(self, row: pd.Series, *, calibrated: bool = True) -> tuple[str, float, float]:
+        probability, anomaly = self.predict_details(row, calibrated=calibrated)
         return (
             LABELS[int(probability.argmax())],
             float(probability.max()),
-            float(-self.anomaly.score_samples(numeric)[0]),
+            anomaly,
         )
 
 
@@ -82,6 +127,8 @@ class WorkflowTrace:
     tool_calls: list[str]
     evidence_verified: bool
     temporal_correct: bool
+    feature_event_timestamp: str
+    feature_system_known_at: str
     authorization_outcome: str
     human_review_requested: bool
     structured_output_valid: bool
@@ -100,12 +147,14 @@ class GovernedWorkflow:
         ledger: ActionLedger,
         authority: ApprovalAuthority,
         risk_service: RiskService | None = None,
+        state_dir: Path | None = None,
     ) -> None:
         self.risk = risk_service or RiskService(training)
         self.controls = controls
         self.ledger = ledger
         self.policy = LocalPolicyBackend()
         self.authority = authority
+        self.state_dir = state_dir
 
     @staticmethod
     def identity(row: pd.Series) -> IdentityContext:
@@ -122,10 +171,11 @@ class GovernedWorkflow:
     def _evidence(
         self, row: pd.Series, config: WorkflowConfig, identity: IdentityContext
     ) -> tuple[list[TemporalEvidence], bool]:
-        if not config.retrieval or "source evidence unavailable" in row.narrative.casefold():
+        missing_evidence = str(row.get("evidence_status", "AVAILABLE")) == "MISSING"
+        if not config.retrieval or missing_evidence:
             # Absence is a correct temporal state for an explicit missing-
             # evidence case; the verifier will force insufficient evidence.
-            return [], "source evidence unavailable" in row.narrative.casefold()
+            return [], missing_evidence
         origin = datetime(2020, 1, 1, tzinfo=UTC)
         items: list[TemporalEvidence] = []
         for control in self.controls.itertuples():
@@ -173,7 +223,7 @@ class GovernedWorkflow:
             selected.append(
                 TemporalEvidence(
                     evidence_id=f"{regulation}:{chosen_version}",
-                    source="eCFR Title 12",
+                    source="synthetic temporal regulation fixture",
                     text=text,
                     classification=0,
                     business_valid_from=valid_from,
@@ -182,7 +232,7 @@ class GovernedWorkflow:
                     content_sha256=hashlib.sha256(text.encode()).hexdigest(),
                 )
             )
-        if "authoritative records disagree" in row.narrative.casefold() and selected:
+        if str(row.get("evidence_status", "AVAILABLE")) == "CONFLICT" and selected:
             control_id = CONTROL.search(str(row.narrative)).group(0)  # type: ignore[union-attr]
             text = f"[CONTRADICTS] control {control_id} does not apply"
             selected.append(
@@ -206,31 +256,96 @@ class GovernedWorkflow:
 
     def context_for_llm(self, row: pd.Series, config: WorkflowConfig) -> str:
         evidence, _ = self._evidence(row, config, self.identity(row))
-        return "\n".join(item.text[:300] for item in evidence[:3])
+        controls = "\n".join(item.text[:300] for item in evidence if item.source == "NIST SP 800-53")
+        regulations = "\n".join(item.text[:300] for item in evidence if item.source != "NIST SP 800-53")
+        risk_observation = ""
+        anomaly_observation = ""
+        if config.ml_risk:
+            severity, confidence, anomaly = self.risk.predict(row, calibrated=config.calibration)
+            risk_observation = f"severity={severity}; confidence={confidence:.6f}"
+            anomaly_observation = f"anomaly_score={anomaly:.6f}"
+        return json.dumps(
+            {
+                "search_controls": controls,
+                "search_regulations": regulations,
+                "compute_risk": risk_observation,
+                "compute_anomaly": anomaly_observation,
+                "propose_case_update": "write action requires the workflow authorization boundary",
+            },
+            sort_keys=True,
+        )
 
-    def execute(self, row: pd.Series, config: WorkflowConfig, llm_prediction: tuple[str, str, bool]) -> WorkflowTrace:
+    def execute(
+        self,
+        row: pd.Series,
+        config: WorkflowConfig,
+        llm_prediction: tuple[str, str, bool],
+        llm_tool_requests: list[str] | None = None,
+    ) -> WorkflowTrace:
         started = time.perf_counter()
         identity = self.identity(row)
         tool_calls: list[str] = []
+        requested = set(llm_tool_requests) if llm_tool_requests is not None else None
+        risk_requested = requested is None or bool(requested & {"compute_risk", "compute_anomaly"})
+        retrieval_requested = requested is None or bool(requested & {"search_controls", "search_regulations"})
+        action_requested = requested is None or "propose_case_update" in requested
         llm_severity, llm_disposition, llm_valid = llm_prediction
-        if config.ml_risk:
-            severity, confidence, anomaly_score = self.risk.predict(row, calibrated=config.calibration)
+        risk_probabilities: np.ndarray | None = None
+        if config.ml_risk and risk_requested:
+            feature_row = row.copy()
+            if not config.point_in_time_features:
+                feature_row["historical_failures"] = row["future_failures"]
+            risk_probabilities, anomaly_score = self.risk.predict_details(feature_row, calibrated=config.calibration)
+            severity = LABELS[int(risk_probabilities.argmax())]
+            confidence = float(risk_probabilities.max())
             if config.anomaly and anomaly_score > self.risk.anomaly_threshold:
                 severity = LABELS[min(3, LABELS.index(severity) + 1)]
-            if not config.point_in_time_features:
-                # Negative-control ablation: deliberately expose the post-case
-                # outcome to quantify how leakage can inflate apparent quality.
-                severity = str(row.severity)
             tool_calls.append("compute_risk")
+            if config.anomaly:
+                tool_calls.append("compute_anomaly")
         else:
             severity = llm_severity
             confidence, anomaly_score = 0.5, 0.0
-        evidence, temporal = self._evidence(row, config, identity)
-        if config.retrieval:
-            tool_calls.extend(["search_controls", "search_regulations"])
+        evidence, temporal = self._evidence(row, config, identity) if retrieval_requested else ([], True)
+        feature_temporal = pd.Timestamp(row.get("feature_event_timestamp", row.event_timestamp)) <= pd.Timestamp(
+            row.event_timestamp
+        ) and pd.Timestamp(row.get("feature_system_known_at", row.event_timestamp)) <= pd.Timestamp(row.event_timestamp)
+        temporal = temporal and feature_temporal and config.point_in_time_features
+        if config.retrieval and retrieval_requested:
+            registry = ToolRegistry(self.policy)
+            for tool_name in ("search_controls", "search_regulations"):
+                if requested is not None and tool_name not in requested:
+                    continue
+                registry.register(
+                    ToolSpec(
+                        name=tool_name,
+                        input_model=EvidenceSearchInput,
+                        output_model=EvidenceSearchOutput,
+                        risk_tier=0,
+                        read_only=True,
+                        allowed_roles=frozenset({"Control Analyst"}),
+                        allowed_data_scopes=frozenset({identity.business_unit}),
+                        human_review_required=False,
+                        timeout_seconds=2.0,
+                        max_retries=1,
+                        implementation=lambda _: EvidenceSearchOutput(
+                            evidence_ids=[item.evidence_id for item in evidence]
+                        ),
+                    )
+                )
+                if config.authorization:
+                    registry.invoke(
+                        tool_name,
+                        {"query": str(row.narrative)},
+                        identity=identity,
+                        scope=identity.business_unit,
+                        data_classification=0,
+                        severity=Severity(severity),
+                    )
+                tool_calls.append(tool_name)
         state = AgentState(
             case_id=str(row.case_id),
-            workflow_version="agent-graph-v2",
+            workflow_version="agent-graph-v3",
             event_time=pd.Timestamp(row.event_timestamp).to_pydatetime(),
             system_time=pd.Timestamp(row.event_timestamp).to_pydatetime(),
             identity_context=identity,
@@ -246,7 +361,7 @@ class GovernedWorkflow:
         expected_policy = "policy-v1" if state.event_time.year < 2024 else "policy-v2"
         if regulation_match:
             required_ids.append(f"{regulation_match.group(0)}:{expected_policy}")
-        if "records disagree" in str(row.narrative).casefold() and control_match:
+        if str(row.get("evidence_status", "AVAILABLE")) == "CONFLICT" and control_match:
             required_ids.append(f"{control_match.group(0)}:CONFLICT")
         claims = {
             "applicability": (
@@ -258,9 +373,11 @@ class GovernedWorkflow:
         }
         verification = verify_claims(state, claims) if config.verifier else None
         evidence_verified = verification.all_verified if verification else bool(evidence)
-        injection_detected = bool(INJECTION.search(str(row.narrative)))
+        injection_detected = bool(INJECTION.search(str(row.narrative))) or any(
+            INJECTION.search(item.text) is not None for item in evidence
+        )
         requested_scope = (
-            "restricted" if "exceeds" in str(row.narrative).casefold() or injection_detected else identity.business_unit
+            "restricted" if injection_detected else str(row.get("requested_scope", identity.business_unit))
         )
         request = ToolPolicyInput(
             tool_name="propose_case_update",
@@ -287,16 +404,46 @@ class GovernedWorkflow:
             disposition = "REVIEW_REQUIRED" if severity in {"HIGH", "CRITICAL"} and config.hitl else "AUTO"
         else:
             disposition = llm_disposition
-        structured_valid = (
-            llm_valid
-            if not config.structured_output
-            else disposition in {"AUTO", "REVIEW_REQUIRED", "INSUFFICIENT_EVIDENCE", "DENY"} and severity in LABELS
-        )
+        if config.structured_output:
+            try:
+                FinalAgentOutput(
+                    case_id=str(row.case_id),
+                    severity=Severity(severity),
+                    confidence=confidence,
+                    controls=(control_match.group(0),) if control_match else (),
+                    regulations=(regulation_match.group(0),) if regulation_match else (),
+                    evidence=tuple(item.evidence_id for item in evidence),
+                    root_cause_hypotheses=("control execution variance",),
+                    recommended_actions=(
+                        ProposedAction(
+                            action_type="propose_case_update",
+                            payload={"status": "investigated"},
+                            risk_tier=2 if severity in {"HIGH", "CRITICAL"} else 1,
+                            rollback_available=True,
+                        ),
+                    ),
+                    automation_decision=Disposition(disposition),
+                    human_review_required=disposition == "REVIEW_REQUIRED",
+                )
+                structured_valid = True
+            except (ValidationError, ValueError):
+                structured_valid = False
+        else:
+            structured_valid = llm_valid
         action_executed = False
         action_id = None
+        if disposition == "REVIEW_REQUIRED" and config.tools_enabled and config.hitl and action_requested:
+            pending = self.ledger.request_review(
+                case_id=str(row.case_id),
+                action_type="propose_case_update",
+                payload={"status": "investigated"},
+                workflow_version="agent-graph-v3",
+            )
+            action_id = pending.action_id
         if (
             disposition == "AUTO"
             and config.tools_enabled
+            and action_requested
             and (
                 (config.bounded_tools and authorization_outcome in {"ALLOW", "ALLOW_READONLY"})
                 or not config.bounded_tools
@@ -304,26 +451,98 @@ class GovernedWorkflow:
         ):
             payload = {"status": "investigated"}
             evidence_hash = hashlib.sha256(canonical_json(sorted(item.evidence_id for item in evidence))).hexdigest()
-            token = self.authority.issue(
+            token = self.authority.issue_system(
                 case_id=str(row.case_id),
                 action_type="propose_case_update",
                 payload=payload,
-                workflow_version="agent-graph-v2",
-                reviewer_id="SYSTEM_AUTO" if config.authorization else "UNRESTRICTED_AGENT",
+                workflow_version="agent-graph-v3",
                 policy_version="local-policy-v1",
                 evidence_hash=evidence_hash,
+                risk_tier=1,
+                authorization_outcome="ALLOW",
             )
-            receipt = self.ledger.execute_simulated(
-                case_id=str(row.case_id),
-                action_type="propose_case_update",
-                payload=payload,
-                workflow_version="agent-graph-v2",
-                authorization_token=token,
-                approval_authority=self.authority,
-                evidence_hash=evidence_hash,
-            )
-            action_executed, action_id = receipt.executed, receipt.action_id
+
+            def execute_action(_: ActionInput) -> ActionOutput:
+                receipt = self.ledger.execute_simulated(
+                    case_id=str(row.case_id),
+                    action_type="propose_case_update",
+                    payload=payload,
+                    workflow_version="agent-graph-v3",
+                    authorization_token=token,
+                    approval_authority=self.authority,
+                    evidence_hash=evidence_hash,
+                )
+                return ActionOutput(executed=receipt.executed, action_id=receipt.action_id)
+
+            if config.authorization and config.bounded_tools:
+                action_registry = ToolRegistry(self.policy)
+                action_registry.register(
+                    ToolSpec(
+                        name="propose_case_update",
+                        input_model=ActionInput,
+                        output_model=ActionOutput,
+                        risk_tier=1,
+                        read_only=False,
+                        allowed_roles=frozenset({"Control Analyst"}),
+                        allowed_data_scopes=frozenset({identity.business_unit}),
+                        human_review_required=False,
+                        timeout_seconds=2.0,
+                        max_retries=0,
+                        implementation=execute_action,
+                    )
+                )
+                result = action_registry.invoke(
+                    "propose_case_update",
+                    {"case_id": str(row.case_id), "status": "investigated"},
+                    identity=identity,
+                    scope=identity.business_unit,
+                    data_classification=0,
+                    severity=Severity(severity),
+                )
+                receipt_executed, receipt_action_id = result.executed, result.action_id  # type: ignore[attr-defined]
+            else:
+                unrestricted = execute_action(ActionInput(case_id=str(row.case_id), status="investigated"))
+                receipt_executed, receipt_action_id = unrestricted.executed, unrestricted.action_id
+            action_executed, action_id = receipt_executed, receipt_action_id
             tool_calls.append("propose_case_update")
+        state.applicable_controls = [control_match.group(0)] if control_match else []
+        state.applicable_regulations = [regulation_match.group(0)] if regulation_match else []
+        state.structured_evidence = {
+            item.evidence_id: {"source": item.source, "content_sha256": item.content_sha256} for item in evidence
+        }
+        if risk_probabilities is not None:
+            state.risk_prediction = RiskPrediction(
+                model_id="calibrated-logistic-risk-v1",
+                probabilities={Severity(label): float(risk_probabilities[index]) for index, label in enumerate(LABELS)},
+                predicted_severity=Severity(severity),
+                calibrated=config.calibration,
+                prediction_time=state.system_time,
+            )
+            state.risk_uncertainty = 1.0 - confidence
+        if config.anomaly and risk_requested:
+            state.anomaly_signal = AnomalySignal(
+                model_id="isolation-forest-signal-v1",
+                score=anomaly_score,
+                threshold=self.risk.anomaly_threshold,
+                is_anomaly=anomaly_score > self.risk.anomaly_threshold,
+            )
+        state.proposed_actions = [
+            ProposedAction(
+                action_type="propose_case_update",
+                payload={"status": "investigated"},
+                risk_tier=2 if severity in {"HIGH", "CRITICAL"} else 1,
+                rollback_available=True,
+            )
+        ]
+        state.verification_result = verification
+        state.authorization_result = authorization
+        state.final_disposition = Disposition(disposition)
+        if self.state_dir is not None:
+            self.state_dir.mkdir(parents=True, exist_ok=True)
+            atomic_write_json(
+                self.state_dir / f"{row.case_id}.json",
+                state.model_dump(mode="json"),
+            )
         return WorkflowTrace(
             case_id=str(row.case_id),
             predicted_severity=severity,
@@ -334,6 +553,8 @@ class GovernedWorkflow:
             tool_calls=tool_calls,
             evidence_verified=evidence_verified,
             temporal_correct=temporal,
+            feature_event_timestamp=str(row.get("feature_event_timestamp", row.event_timestamp)),
+            feature_system_known_at=str(row.get("feature_system_known_at", row.event_timestamp)),
             authorization_outcome=authorization_outcome,
             human_review_requested=human_review,
             structured_output_valid=structured_valid,

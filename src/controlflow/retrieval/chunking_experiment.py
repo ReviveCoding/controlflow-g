@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import time
+from collections.abc import Callable
+from typing import Any
 
 import pandas as pd
 
 from controlflow.core.state import PhaseRun, ProjectPaths, canonical_json, sha256_file, utc_now
-from controlflow.retrieval.chunking import control_chunks, fixed_chunks, hierarchical_chunks, section_chunks
+from controlflow.retrieval.chunking import Chunk, control_chunks, fixed_chunks, hierarchical_chunks, section_chunks
 from controlflow.retrieval.core import BM25Retriever
 from controlflow.retrieval.evaluate import RetrievalCase, evaluate_retriever
 from controlflow.retrieval.experiments import QUERIES, _item
@@ -19,7 +21,7 @@ def run() -> str:
     document = "\n".join(
         f"{row.control_id} {str(row.title).upper()}\n{row.description}" for row in controls.itertuples()
     )
-    strategies = {
+    strategies: dict[str, Callable[[], list[Chunk]]] = {
         "fixed_256": lambda: fixed_chunks("nist", document, 256),
         "fixed_512": lambda: fixed_chunks("nist", document, 512),
         "fixed_1024": lambda: fixed_chunks("nist", document, 1024),
@@ -27,7 +29,7 @@ def run() -> str:
         "control_aware": lambda: control_chunks("nist", document),
         "hierarchical": lambda: hierarchical_chunks("nist", document),
     }
-    rows = []
+    rows: list[dict[str, Any]] = []
     with PhaseRun("P14", paths) as phase:
         for name, builder in strategies.items():
             started = time.perf_counter()

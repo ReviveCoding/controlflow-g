@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from dataclasses import dataclass
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, TypeVar, cast
 
 from pydantic import BaseModel
 
@@ -76,7 +76,8 @@ class ToolRegistry:
         if authorization.outcome is AuthorizationOutcome.REQUIRE_REVIEW:
             raise ToolDenied("human_review_required")
         last_error: Exception | None = None
-        for attempt in range(spec.max_retries + 1):
+        attempts = 1 if not spec.read_only else spec.max_retries + 1
+        for attempt in range(attempts):
             executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"tool-{name}")
             future = executor.submit(spec.implementation, parsed)
             try:
@@ -89,8 +90,8 @@ class ToolRegistry:
                         "status": "success",
                     }
                 )
-                executor.shutdown(wait=False, cancel_futures=True)
-                return output
+                executor.shutdown(wait=True, cancel_futures=True)
+                return cast(BaseModel, output)
             except TimeoutError as exc:
                 future.cancel()
                 last_error = exc
@@ -114,5 +115,7 @@ class ToolRegistry:
                     }
                 )
             finally:
-                executor.shutdown(wait=False, cancel_futures=True)
-        raise RuntimeError(f"tool {name} failed after {spec.max_retries + 1} attempts") from last_error
+                # Threads cannot be forcibly cancelled. Waiting prevents
+                # overlap before a read-only retry; writes are never retried.
+                executor.shutdown(wait=True, cancel_futures=True)
+        raise RuntimeError(f"tool {name} failed after {attempts} attempts") from last_error

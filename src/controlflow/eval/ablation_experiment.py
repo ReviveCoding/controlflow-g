@@ -42,17 +42,19 @@ def run() -> str:
     llm = llm_traces[llm_traces.experiment_id == "agent-AG1_single_llm"].set_index("case_id")
     cases = frame[frame.case_id.isin(llm.index)].set_index("case_id").loc[llm.index]
     controls = pd.read_parquet(paths.root / "data/staging/nist_controls_raw.parquet")
-    workflow = GovernedWorkflow(
-        train,
-        controls,
-        ActionLedger(paths.root / "artifacts/ablation_action_ledger.sqlite"),
-        ApprovalAuthority(secrets.token_bytes(32)),
-        risk_service=joblib.load(paths.root / "artifacts/calibrated_risk_service.joblib"),
-    )
+    risk_service = joblib.load(paths.root / "artifacts/calibrated_risk_service.joblib")
     traces, summaries = [], []
     with PhaseRun("P22", paths) as phase:
         for name, changes in REMOVALS.items():
             config = replace(CONFIGS["AG6_controlflow_g"], **changes)
+            workflow = GovernedWorkflow(
+                train,
+                controls,
+                ActionLedger(paths.root / f"artifacts/ablation_{name}_action_ledger_v3.sqlite"),
+                ApprovalAuthority(secrets.token_bytes(32)),
+                risk_service=risk_service,
+                state_dir=paths.root / f"artifacts/ablation_graph_state_v3/{name}",
+            )
             current = []
             for case_id, row in cases.iterrows():
                 row = row.copy()

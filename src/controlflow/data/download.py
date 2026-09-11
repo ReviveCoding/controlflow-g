@@ -5,11 +5,12 @@ import os
 import re
 import time
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any, cast
 
 import httpx
 import typer
 import yaml
+from filelock import FileLock
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from controlflow.core.state import ProjectPaths, atomic_write_json, sha256_file, utc_now
@@ -21,11 +22,11 @@ class RetryableHttpError(RuntimeError):
     pass
 
 
-def _source_config(paths: ProjectPaths) -> dict[str, object]:
-    return yaml.safe_load((paths.root / "configs/data/sources.yaml").read_text(encoding="utf-8"))
+def _source_config(paths: ProjectPaths) -> dict[str, Any]:
+    return cast(dict[str, Any], yaml.safe_load((paths.root / "configs/data/sources.yaml").read_text(encoding="utf-8")))
 
 
-def _user_agent(config: dict[str, object]) -> str:
+def _user_agent(config: dict[str, Any]) -> str:
     configured = str(config["user_agent"])
     contact = os.environ.get("CONTROLFLOW_CONTACT_EMAIL", "").strip()
     if contact:
@@ -71,13 +72,9 @@ def record_dataset(
 ) -> dict[str, object]:
     paths = ProjectPaths.discover()
     manifest_path = paths.state / "data_manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     relative = path.resolve().relative_to(paths.root).as_posix()
     current_hash = sha256_file(path)
-    prior = next((item for item in manifest["datasets"] if item["name"] == name), None)
-    if prior is not None and prior.get("local_path") == relative and prior.get("sha256") != current_hash:
-        raise RuntimeError(f"immutable cached dataset hash mismatch for {name}; refusing to bless changed bytes")
-    record = {
+    record: dict[str, object] = {
         "name": name,
         "official_source": official_source,
         "retrieval_timestamp": utc_now(),
@@ -91,10 +88,15 @@ def record_dataset(
         "download_method": method,
         "local_path": relative,
     }
-    existing = [item for item in manifest["datasets"] if item["name"] != name]
-    existing.append(record)
-    manifest.update(updated_at=utc_now(), datasets=sorted(existing, key=lambda item: item["name"]))
-    atomic_write_json(manifest_path, manifest)
+    with FileLock(str(manifest_path) + ".lock"):
+        manifest: dict[str, Any] = json.loads(manifest_path.read_text(encoding="utf-8"))
+        prior = next((item for item in manifest["datasets"] if item["name"] == name), None)
+        if prior is not None and prior.get("local_path") == relative and prior.get("sha256") != current_hash:
+            raise RuntimeError(f"immutable cached dataset hash mismatch for {name}; refusing to bless changed bytes")
+        existing = [item for item in manifest["datasets"] if item["name"] != name]
+        existing.append(record)
+        manifest.update(updated_at=utc_now(), datasets=sorted(existing, key=lambda item: item["name"]))
+        atomic_write_json(manifest_path, manifest)
     return record
 
 

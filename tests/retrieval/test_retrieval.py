@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 from datetime import UTC, datetime
 
-from controlflow.retrieval.core import BM25Retriever, governed_filter
+from controlflow.retrieval.core import GovernedBM25Retriever
 from controlflow.schemas import IdentityContext, TemporalEvidence
 
 
@@ -19,12 +19,11 @@ def evidence(identifier: str, text: str, classification: int = 1, start: str = "
     )
 
 
-def test_bm25_and_governed_filter_remove_unauthorized() -> None:
+def test_governed_bm25_never_indexes_unauthorized_evidence() -> None:
     corpus = [
         evidence("public", "access control account review"),
         evidence("secret", "access control account review privileged", 5),
     ]
-    hits = BM25Retriever(corpus).search("privileged access control", 2)
     identity = IdentityContext(
         user_id="u",
         role="Control Analyst",
@@ -34,11 +33,12 @@ def test_bm25_and_governed_filter_remove_unauthorized() -> None:
         purpose="investigate",
         session_id="s",
     )
-    governed = governed_filter(
-        hits,
+    retriever = GovernedBM25Retriever(
+        corpus,
         identity=identity,
         event_time=datetime(2025, 1, 1, tzinfo=UTC),
         known_time=datetime(2025, 1, 1, tzinfo=UTC),
-        k=2,
     )
+    governed = retriever.search("privileged access control", 2)
+    assert [item.evidence_id for item in retriever.corpus] == ["public"]
     assert [hit.evidence.evidence_id for hit in governed] == ["public"]

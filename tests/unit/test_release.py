@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from controlflow.release import evaluate_release_gates
+from controlflow.release import evaluate_release_gates, freeze_identity_hash
 
 
 def passing_metrics() -> dict[str, float]:
@@ -26,7 +26,15 @@ def test_release_gates_promote_only_when_all_pass() -> None:
 def test_release_gates_fail_closed_for_missing_and_zero_tolerance() -> None:
     metrics = passing_metrics()
     del metrics["critical_recall"]
-    assert evaluate_release_gates(metrics)[0] == "CONDITIONAL_PROMOTE"
+    assert evaluate_release_gates(metrics)[0] == "NO_PROMOTE"
+
+
+def test_freeze_identity_excludes_timestamp_but_includes_inputs() -> None:
+    first = {"created_at": "a", "git_revision": "1", "artifacts": [{"sha256": "x"}]}
+    second = {**first, "created_at": "b"}
+    assert freeze_identity_hash(first) == freeze_identity_hash(second)
+    second["artifacts"] = [{"sha256": "y"}]
+    assert freeze_identity_hash(first) != freeze_identity_hash(second)
     metrics = passing_metrics()
     metrics["approval_bypass_count"] = 1
     assert evaluate_release_gates(metrics)[0] == "NO_PROMOTE"

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -20,7 +21,7 @@ from controlflow.features.point_in_time import (
 def generate(seed: int = 1729, entities: int = 200, cases_per_entity: int = 25) -> tuple[pd.DataFrame, pd.DataFrame]:
     rng = np.random.default_rng(seed)
     start = datetime(2023, 1, 1, tzinfo=UTC)
-    cases: list[dict[str, object]] = []
+    cases: list[dict[str, Any]] = []
     events: list[dict[str, object]] = []
     for entity_index in range(entities):
         entity = f"ENTITY-{entity_index:05d}"

@@ -5,7 +5,7 @@ import json
 import platform
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pandas as pd
 import torch
@@ -34,7 +34,7 @@ class MLP(nn.Module):
         )
 
     def forward(self, features: torch.Tensor) -> torch.Tensor:
-        return self.layers(features)
+        return cast(torch.Tensor, self.layers(features))
 
 
 def run_mlp_validation(cases_path: Path, seeds: tuple[int, ...] = (17,)) -> pd.DataFrame:
@@ -129,4 +129,4 @@ class Autoencoder(nn.Module):
         self.decoder = nn.Sequential(nn.Linear(latent, 16), nn.ReLU(), nn.Linear(16, dimensions))
 
     def forward(self, features: torch.Tensor) -> torch.Tensor:
-        return self.decoder(self.encoder(features))
+        return cast(torch.Tensor, self.decoder(self.encoder(features)))

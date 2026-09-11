@@ -1,17 +1,18 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import xml.etree.ElementTree as ET
 from collections import Counter
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from controlflow.core.state import PhaseRun, ProjectPaths, atomic_write_json, utc_now
+from controlflow.core.state import PhaseRun, ProjectPaths, atomic_write_json, canonical_json, sha256_file, utc_now
 
 
 def _merge(counter: Counter[str], series: pd.Series) -> None:
@@ -263,8 +264,8 @@ def run() -> Path:
         def cached(name: str, build: Any) -> dict[str, Any]:
             checkpoint = checkpoint_dir / f"{name}.json"
             if checkpoint.exists():
-                return json.loads(checkpoint.read_text(encoding="utf-8"))
-            value = build()
+                return cast(dict[str, Any], json.loads(checkpoint.read_text(encoding="utf-8")))
+            value = cast(dict[str, Any], build())
             atomic_write_json(checkpoint, value)
             phase.register(checkpoint, "profile_checkpoint")
             phase.journal(
@@ -331,6 +332,13 @@ def run() -> Path:
                 },
             ]
         )
+        dq["experiment_id"] = "data-quality-public-sources"
+        dq["config_hash"] = hashlib.sha256(canonical_json({"profile": "SMOKE", "version": 2})).hexdigest()
+        dq["dataset_hash"] = sha256_file(root / "state/data_manifest.json")
+        dq["split_identifier"] = "not_applicable"
+        dq["seed"] = 17
+        dq["hardware_runtime"] = "CPU"
+        dq["timestamp"] = utc_now()
         dq_path = root / "results" / "data_quality.parquet"
         dq.to_parquet(dq_path, index=False)
         figures = _figures(root, cfpb, nist, cfr, sec)

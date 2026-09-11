@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from typing import Any
 
 import joblib
 import numpy as np
@@ -60,7 +61,9 @@ def run() -> str:
         fit_probability = model.predict_proba(calibration_x)
         selection_probability = model.predict_proba(selection_x)
         threshold_probability = model.predict_proba(threshold_x)
-        rows = [{"method": "uncalibrated", **classification_metrics(selection_y, selection_probability)}]
+        rows: list[dict[str, Any]] = [
+            {"method": "uncalibrated", **classification_metrics(selection_y, selection_probability)}
+        ]
         calibrated_predictions: dict[str, np.ndarray] = {"uncalibrated": threshold_probability}
         calibrators: dict[str, object | None] = {"uncalibrated": None}
         for method in ("platt", "isotonic"):
@@ -99,10 +102,50 @@ def run() -> str:
         result["status"] = "ok"
         target = paths.root / "results" / "calibration.parquet"
         result.to_parquet(target, index=False)
-        selected = min(rows, key=lambda row: row["brier_score"])["method"]
+        selected = str(min(rows, key=lambda row: float(row["brier_score"]))["method"])
+        bin_rows: list[dict[str, Any]] = []
+        for method, probabilities in calibrated_predictions.items():
+            confidence = probabilities.max(axis=1)
+            correct = probabilities.argmax(axis=1) == threshold_y
+            assignments = np.minimum((confidence * 10).astype(int), 9)
+            for bin_index in range(10):
+                mask = assignments == bin_index
+                if not mask.any():
+                    continue
+                bin_rows.append(
+                    {
+                        "experiment_id": f"calibration-bin-{method}-{bin_index}",
+                        "config_hash": hashlib.sha256(
+                            canonical_json({"method": method, "bin": bin_index, "bins": 10})
+                        ).hexdigest(),
+                        "dataset_hash": sha256_file(source),
+                        "split_identifier": "validation_threshold_selection",
+                        "seed": 17,
+                        "hardware_runtime": "CPU",
+                        "timestamp": utc_now(),
+                        "status": "ok",
+                        "method": method,
+                        "bin": bin_index,
+                        "count": int(mask.sum()),
+                        "mean_confidence": float(confidence[mask].mean()),
+                        "observed_accuracy": float(correct[mask].mean()),
+                    }
+                )
+        calibration_bins = paths.root / "results" / "calibration_bins.parquet"
+        pd.DataFrame(bin_rows).to_parquet(calibration_bins, index=False)
         coverage = risk_coverage(calibrated_predictions[selected], threshold_y)
         coverage["calibration_method"] = selected
         coverage["evaluation_count"] = len(threshold_y)
+        coverage["experiment_id"] = coverage.threshold.map(lambda value: f"risk-coverage-{value:.2f}")
+        coverage["config_hash"] = hashlib.sha256(
+            canonical_json({"calibration_method": selected, "seed": 17})
+        ).hexdigest()
+        coverage["dataset_hash"] = sha256_file(source)
+        coverage["split_identifier"] = "validation_threshold_selection"
+        coverage["seed"] = 17
+        coverage["hardware_runtime"] = "CPU"
+        coverage["timestamp"] = utc_now()
+        coverage["status"] = "ok"
         coverage.to_parquet(paths.root / "results" / "risk_coverage.parquet", index=False)
         eligible = coverage[(coverage["residual_critical_error"] == 0) & (coverage["critical_capture"] >= 0.9)]
         review_threshold = float(eligible.threshold.min()) if len(eligible) else 0.9
@@ -113,6 +156,7 @@ def run() -> str:
         risk_artifact.parent.mkdir(parents=True, exist_ok=True)
         joblib.dump(risk_service, risk_artifact)
         phase.register(target, "result_table")
+        phase.register(calibration_bins, "result_table")
         phase.register(paths.root / "results" / "risk_coverage.parquet", "result_table")
         phase.register(risk_artifact, "calibrated_model")
     return str(target)

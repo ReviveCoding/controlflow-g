@@ -46,9 +46,11 @@ class KeywordRetriever:
 class BM25Retriever:
     def __init__(self, corpus: list[TemporalEvidence]) -> None:
         self.corpus = corpus
-        self.index = BM25Okapi([tokenize(item.text) for item in corpus])
+        self.index = BM25Okapi([tokenize(item.text) for item in corpus]) if corpus else None
 
     def search(self, query: str, k: int) -> list[SearchHit]:
+        if self.index is None:
+            return []
         scores = self.index.get_scores(tokenize(query))
         order = np.argsort(scores)[::-1][:k]
         return [SearchHit(self.corpus[index], float(scores[index]), rank + 1) for rank, index in enumerate(order)]
@@ -78,19 +80,39 @@ def reciprocal_rank_fusion(result_sets: list[list[SearchHit]], k: int, constant:
     return [SearchHit(evidence[item], scores[item], rank + 1) for rank, item in enumerate(order)]
 
 
-def governed_filter(
-    hits: list[SearchHit],
+def authorized_evidence_partition(
+    corpus: list[TemporalEvidence],
     *,
     identity: IdentityContext,
     event_time: datetime,
     known_time: datetime,
-    k: int,
-) -> list[SearchHit]:
-    accepted = [
-        hit
-        for hit in hits
-        if hit.evidence.valid_at(event_time, known_time)
-        and identity.clearance >= hit.evidence.classification
-        and (not hit.evidence.authorized_roles or identity.role in hit.evidence.authorized_roles)
-    ][:k]
-    return [SearchHit(hit.evidence, hit.score, rank + 1) for rank, hit in enumerate(accepted)]
+) -> list[TemporalEvidence]:
+    """Return the only corpus a downstream scorer is permitted to observe."""
+    return [
+        evidence
+        for evidence in corpus
+        if evidence.valid_at(event_time, known_time)
+        and identity.clearance >= evidence.classification
+        and (not evidence.authorized_roles or identity.role in evidence.authorized_roles)
+    ]
+
+
+class GovernedBM25Retriever(BM25Retriever):
+    """BM25 index built exclusively over a point-in-time authorized partition."""
+
+    def __init__(
+        self,
+        corpus: list[TemporalEvidence],
+        *,
+        identity: IdentityContext,
+        event_time: datetime,
+        known_time: datetime,
+    ) -> None:
+        super().__init__(
+            authorized_evidence_partition(
+                corpus,
+                identity=identity,
+                event_time=event_time,
+                known_time=known_time,
+            )
+        )

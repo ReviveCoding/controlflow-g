@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
@@ -26,7 +26,7 @@ class OneVsRestCalibrator:
                 columns.append(model.predict(probabilities[:, index]))
         calibrated = np.column_stack(columns)
         denominator = calibrated.sum(axis=1, keepdims=True)
-        return calibrated / np.maximum(denominator, 1e-12)
+        return cast(NDArray[np.float64], calibrated / np.maximum(denominator, 1e-12))
 
 
 def fit_calibrator(probabilities: NDArray[np.float64], labels: NDArray[np.int_], method: str) -> OneVsRestCalibrator:

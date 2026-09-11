@@ -35,7 +35,10 @@ def validate_readonly_sql(sql: str, allowed_tables: frozenset[str], max_rows: in
     if not tables or not tables.issubset(normalized_allowlist):
         raise UnsafeQuery("query references a missing or unauthorized table")
     denied_functions = {"read_csv", "read_json", "read_parquet", "input_file_name", "java_method", "reflect"}
-    functions = {function.sql_name().casefold() for function in statement.find_all(exp.Func)}
+    functions = {
+        (function.name if isinstance(function, exp.Anonymous) else function.key).casefold()
+        for function in statement.find_all(exp.Func)
+    }
     if functions & denied_functions:
         raise UnsafeQuery("query uses a denied external or reflective function")
     limit = statement.args.get("limit")

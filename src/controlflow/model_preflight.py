@@ -19,7 +19,7 @@ LLM_MODEL = "Qwen/Qwen2.5-0.5B-Instruct"
 
 def _model_identity(model_id: str) -> dict[str, Any]:
     info = HfApi().model_info(model_id)
-    card = info.card_data.to_dict() if info.card_data is not None else {}
+    card = info.card_data.to_dict() if info.card_data is not None else {}  # type: ignore[no-untyped-call]
     return {"model_id": model_id, "revision": info.sha, "license": card.get("license")}
 
 
@@ -114,7 +114,7 @@ def llm_smoke(identity: dict[str, Any]) -> dict[str, Any]:
             revision=identity["revision"],
             trust_remote_code=False,
             dtype=torch.float16,
-        ).to("cuda")
+        ).to("cuda")  # type: ignore[arg-type]
         prompt = 'Return only JSON: {"status": "ok"}.'
         encoded = tokenizer(prompt, return_tensors="pt").to("cuda")
         with torch.inference_mode():

@@ -61,7 +61,7 @@ def run() -> Path:
         for name, filename in BRONZE.items():
             frame = (
                 spark.read.parquet(str(root / "data" / "staging" / filename))
-                .withColumn("_bronze_ingested_at", functions.current_timestamp())
+                .withColumn("_bronze_ingested_at", functions.to_timestamp("ingested_at"))
                 .withColumn("_bronze_source_table", functions.lit(name))
             )
             expected = {
@@ -214,15 +214,25 @@ def run() -> Path:
         )
         events = save("silver", "case_events", events)
 
-        synthetic_schema = StructType(
-            [
-                StructField("case_id", StringType(), False),
-                StructField("event_timestamp", TimestampType(), False),
-                StructField("severity", StringType(), False),
-                StructField("expected_disposition", StringType(), False),
-            ]
-        )
-        save("silver", "synthetic_cases", spark.createDataFrame([], synthetic_schema))
+        development = root / "data/silver/synthetic_cases_development.parquet"
+        if development.exists():
+            synthetic_cases = spark.read.parquet(str(development))
+            for column in ("event_timestamp", "feature_event_timestamp", "feature_system_known_at"):
+                synthetic_cases = synthetic_cases.withColumn(
+                    column,
+                    (functions.col(column) / functions.lit(1_000_000_000)).cast("timestamp"),
+                )
+        else:
+            synthetic_schema = StructType(
+                [
+                    StructField("case_id", StringType(), False),
+                    StructField("event_timestamp", TimestampType(), False),
+                    StructField("severity", StringType(), False),
+                    StructField("expected_disposition", StringType(), False),
+                ]
+            )
+            synthetic_cases = spark.createDataFrame([], synthetic_schema)
+        synthetic_cases = save("silver", "synthetic_cases", synthetic_cases)
 
         roles = spark.sql("""SELECT * FROM VALUES
             ('Control Analyst', 2, false), ('Business Owner', 2, true),
@@ -250,14 +260,12 @@ def run() -> Path:
         )
         save("gold", "dim_case_type", case_types)
 
-        fact_case = (
-            events.groupBy("case_id")
-            .agg(
-                functions.min("event_timestamp").alias("created_at"),
-                functions.max("event_timestamp").alias("updated_at"),
-                functions.count("*").alias("event_count"),
-            )
-            .withColumn("severity", functions.lit("UNKNOWN"))
+        fact_case = synthetic_cases.select(
+            "case_id",
+            functions.col("event_timestamp").alias("created_at"),
+            functions.col("event_timestamp").alias("updated_at"),
+            functions.lit(1).alias("event_count"),
+            "severity",
         )
         fact_case = save("gold", "fact_case", fact_case)
         save("gold", "fact_case_event", events)
@@ -278,7 +286,54 @@ def run() -> Path:
             ),
         }
         for name, schema_ddl in empty_specs.items():
-            save("gold", name, spark.createDataFrame([], schema_ddl))
+            trace_path = root / "results/agent_traces.parquet"
+            if trace_path.exists() and name in {
+                "fact_model_prediction",
+                "fact_agent_run",
+                "fact_tool_call",
+                "fact_human_review",
+            }:
+                traces = spark.read.parquet(str(trace_path))
+                traces = traces.join(
+                    synthetic_cases.select("case_id", "event_timestamp"),
+                    "case_id",
+                    "left",
+                )
+                if name == "fact_model_prediction":
+                    table = traces.selectExpr(
+                        "concat(experiment_id, '-', case_id) prediction_id",
+                        "case_id",
+                        "experiment_id model_id",
+                        "event_timestamp predicted_at",
+                    )
+                elif name == "fact_agent_run":
+                    table = traces.selectExpr(
+                        "concat(experiment_id, '-', case_id) run_id",
+                        "case_id",
+                        "event_timestamp started_at",
+                        "predicted_disposition disposition",
+                    )
+                elif name == "fact_tool_call":
+                    table = traces.withColumn(
+                        "tool_name", functions.explode(functions.from_json("tool_calls", "array<string>"))
+                    ).selectExpr(
+                        "concat(experiment_id, '-', case_id, '-', tool_name) call_id",
+                        "concat(experiment_id, '-', case_id) run_id",
+                        "tool_name",
+                        "authorization_correct authorized",
+                        "event_timestamp called_at",
+                    )
+                else:
+                    table = traces.filter("human_review_requested").selectExpr(
+                        "concat(experiment_id, '-', case_id) review_id",
+                        "case_id",
+                        "'simulated-reviewer' reviewer_id",
+                        "'REVIEW_REQUIRED' decision",
+                        "event_timestamp decided_at",
+                    )
+                save("gold", name, table)
+            else:
+                save("gold", name, spark.createDataFrame([], schema_ddl))
         case_360 = fact_case.join(events.groupBy("case_id").pivot("event_type").count(), "case_id", "left")
         save("gold", "case_360", case_360)
 

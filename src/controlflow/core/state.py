@@ -52,6 +52,29 @@ def append_jsonl(path: Path, value: Any) -> None:
         os.fsync(handle.fileno())
 
 
+def verify_artifact_manifest(paths: ProjectPaths | None = None) -> list[str]:
+    """Return integrity errors for every durable artifact currently registered."""
+    project = paths or ProjectPaths.discover()
+    manifest = json.loads(project.artifact_manifest.read_text(encoding="utf-8"))
+    errors: list[str] = []
+    for record in manifest.get("artifacts", []):
+        relative = str(record.get("path", ""))
+        target = (project.root / relative).resolve()
+        try:
+            target.relative_to(project.root)
+        except ValueError:
+            errors.append(f"outside workspace: {relative}")
+            continue
+        if not target.is_file():
+            errors.append(f"missing: {relative}")
+            continue
+        if target.stat().st_size != record.get("bytes"):
+            errors.append(f"size mismatch: {relative}")
+        if sha256_file(target) != record.get("sha256"):
+            errors.append(f"hash mismatch: {relative}")
+    return errors
+
+
 @dataclass(frozen=True)
 class ProjectPaths:
     root: Path
@@ -137,14 +160,19 @@ class PhaseRun(AbstractContextManager["PhaseRun"]):
         return record
 
     def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> Literal[False]:
-        state = self._read_state()
+        with FileLock(str(self.paths.execution_state) + ".lock"):
+            state = self._read_state()
+            if exc is None:
+                state["completed_phases"] = sorted(set([*state["completed_phases"], self.phase]))
+                state["failed_phases"] = [phase for phase in state["failed_phases"] if phase != self.phase]
+                state["status"] = "complete"
+            else:
+                state["failed_phases"] = sorted(set([*state["failed_phases"], self.phase]))
+                state["status"] = "failed"
+            state["updated_at"] = utc_now()
+            atomic_write_json(self.paths.execution_state, state)
         if exc is None:
-            completed = sorted(set([*state["completed_phases"], self.phase]))
-            failed = [phase for phase in state["failed_phases"] if phase != self.phase]
-            self._write_state(status="complete", completed_phases=completed, failed_phases=failed)
             self.journal("completed", f"{self.phase} completed")
-            return False
-        failed = sorted(set([*state["failed_phases"], self.phase]))
-        self._write_state(status="failed", failed_phases=failed)
-        self.journal("failed", f"{type(exc).__name__}: {exc}")
+        else:
+            self.journal("failed", f"{type(exc).__name__}: {exc}")
         return False

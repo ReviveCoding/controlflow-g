@@ -1,0 +1,9 @@
+schema_version: 1
+contracts:
+  nist_controls_raw: {class: STRICT, primary_key: control_id, invalid_action: QUARANTINE}
+  nist_assessments_raw: {class: EVOLVING, invalid_action: QUARANTINE}
+  cfpb_complaints_raw: {class: EVOLVING, primary_key: complaint_id, invalid_action: QUARANTINE}
+  cfr_raw: {class: EVOLVING, invalid_action: QUARANTINE}
+  sec_filings_raw: {class: EVOLVING, primary_key: document_id, invalid_action: QUARANTINE}
+  transactions_raw: {class: EVOLVING, primary_key: transaction_id, invalid_action: QUARANTINE}
+  control_events_raw: {class: EVOLVING, primary_key: event_id, invalid_action: QUARANTINE}

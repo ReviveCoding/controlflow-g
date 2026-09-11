@@ -9,7 +9,7 @@ import threading
 import time
 import warnings
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from controlflow.core.resources import GpuSemaphore, resource_snapshot
 from controlflow.core.state import PhaseRun, ProjectPaths, atomic_write_json, utc_now
@@ -51,7 +51,7 @@ class GpuMonitor:
         self.thread.start()
         return self
 
-    def __exit__(self, exc_type: object, exc: object, traceback: object) -> bool:
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> Literal[False]:
         self.stop.set()
         self.thread.join(timeout=5)
         return False

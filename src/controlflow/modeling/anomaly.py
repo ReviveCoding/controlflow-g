@@ -69,22 +69,26 @@ def run_anomaly_validation(cases_path: Path, seed: int = 17) -> pd.DataFrame:
             labels = model.predict(x)
             score = -model.score_samples(x)
             predicted = labels == -1
-        metrics = _metrics(truth, score, predicted, novel)
         config = {"model": name, "seed": seed, "contamination": contamination}
-        records.append(
-            {
-                "experiment_id": f"anomaly-{name}-s{seed}",
-                "config_hash": hashlib.sha256(canonical_json(config)).hexdigest(),
-                "dataset_hash": sha256_file(cases_path),
-                "split_identifier": "validation+ood",
-                "seed": seed,
-                "hardware_runtime": f"{platform.system()}-{platform.machine()}",
-                "timestamp": utc_now(),
-                "status": "ok",
-                "runtime_seconds": time.perf_counter() - started,
-                "metrics": json.dumps(metrics, sort_keys=True),
-            }
-        )
+        for split_name, mask in {
+            "validation": ~selected.is_ood.to_numpy(),
+            "ood": selected.is_ood.to_numpy(),
+        }.items():
+            metrics = _metrics(truth[mask], score[mask], predicted[mask], novel[mask])
+            records.append(
+                {
+                    "experiment_id": f"anomaly-{name}-{split_name}-s{seed}",
+                    "config_hash": hashlib.sha256(canonical_json(config)).hexdigest(),
+                    "dataset_hash": sha256_file(cases_path),
+                    "split_identifier": split_name,
+                    "seed": seed,
+                    "hardware_runtime": f"{platform.system()}-{platform.machine()}",
+                    "timestamp": utc_now(),
+                    "status": "ok",
+                    "runtime_seconds": time.perf_counter() - started,
+                    "metrics": json.dumps(metrics, sort_keys=True),
+                }
+            )
     result = pd.DataFrame(records)
     target = ProjectPaths.discover().root / "results" / "anomaly.parquet"
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -92,7 +96,7 @@ def run_anomaly_validation(cases_path: Path, seed: int = 17) -> pd.DataFrame:
     return result
 
 
-def run_autoencoder_validation(cases_path: Path, seed: int = 17) -> dict[str, Any]:
+def run_autoencoder_validation(cases_path: Path, seed: int = 17) -> list[dict[str, Any]]:
     if not torch.cuda.is_available():
         raise RuntimeError("autoencoder experiment refused CPU fallback")
     frame = pd.read_parquet(cases_path)
@@ -115,7 +119,7 @@ def run_autoencoder_validation(cases_path: Path, seed: int = 17) -> dict[str, An
         for _ in range(150):
             optimizer.zero_grad(set_to_none=True)
             loss = torch.nn.functional.mse_loss(model(device_train), device_train)
-            loss.backward()
+            loss.backward()  # type: ignore[no-untyped-call]
             optimizer.step()
         model.eval()
         with torch.inference_mode():
@@ -126,22 +130,27 @@ def run_autoencoder_validation(cases_path: Path, seed: int = 17) -> dict[str, An
         del model, optimizer, device_train, device_eval
         torch.cuda.empty_cache()
     threshold = float(np.quantile(train_score, 0.95))
-    metrics = _metrics(truth, score, score >= threshold, novel)
-    return {
-        "experiment_id": f"anomaly-U3_pytorch_autoencoder-s{seed}",
-        "config_hash": hashlib.sha256(
-            canonical_json({"model": "U3_pytorch_autoencoder", "seed": seed, "epochs": 150})
-        ).hexdigest(),
-        "dataset_hash": sha256_file(cases_path),
-        "split_identifier": "validation+ood",
-        "seed": seed,
-        "hardware_runtime": f"{platform.system()}-{platform.machine()}-cuda:{torch.cuda.get_device_name(0)}",
-        "timestamp": utc_now(),
-        "status": "ok",
-        "runtime_seconds": time.perf_counter() - started,
-        "metrics": json.dumps(metrics, sort_keys=True),
-        "device": device,
-    }
+    records = []
+    predicted = score >= threshold
+    for split_name, mask in {"validation": ~evaluation.is_ood.to_numpy(), "ood": evaluation.is_ood.to_numpy()}.items():
+        records.append(
+            {
+                "experiment_id": f"anomaly-U3_pytorch_autoencoder-{split_name}-s{seed}",
+                "config_hash": hashlib.sha256(
+                    canonical_json({"model": "U3_pytorch_autoencoder", "seed": seed, "epochs": 150})
+                ).hexdigest(),
+                "dataset_hash": sha256_file(cases_path),
+                "split_identifier": split_name,
+                "seed": seed,
+                "hardware_runtime": f"{platform.system()}-{platform.machine()}-cuda:{torch.cuda.get_device_name(0)}",
+                "timestamp": utc_now(),
+                "status": "ok",
+                "runtime_seconds": time.perf_counter() - started,
+                "metrics": json.dumps(_metrics(truth[mask], score[mask], predicted[mask], novel[mask]), sort_keys=True),
+                "device": device,
+            }
+        )
+    return records
 
 
 def run() -> str:
@@ -149,12 +158,13 @@ def run() -> str:
     source = paths.root / "data" / "silver" / "synthetic_cases_development.parquet"
     with PhaseRun("P13", paths) as phase:
         anomaly = run_anomaly_validation(source)
-        anomaly = pd.concat([anomaly, pd.DataFrame([run_autoencoder_validation(source)])], ignore_index=True)
+        anomaly = pd.concat([anomaly, pd.DataFrame(run_autoencoder_validation(source))], ignore_index=True)
         anomaly_target = paths.root / "results" / "anomaly.parquet"
         anomaly.to_parquet(anomaly_target, index=False)
         from controlflow.modeling.semi_supervised import run_label_efficiency
 
-        run_label_efficiency(source)
+        semi = pd.concat([run_label_efficiency(source, seed) for seed in (17, 29, 43)], ignore_index=True)
+        semi.to_parquet(paths.root / "results" / "semi_supervised.parquet", index=False)
         phase.register(anomaly_target, "result_table")
         phase.register(paths.root / "results" / "semi_supervised.parquet", "result_table")
     return str(anomaly_target)

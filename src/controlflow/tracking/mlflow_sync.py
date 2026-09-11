@@ -15,11 +15,18 @@ GROUPS = {
     "anomaly": "anomaly",
     "semi_supervised": "semi_supervised",
     "retrieval": "retrieval",
+    "chunking": "retrieval",
+    "retrieval_scaling": "retrieval",
     "agents": "agents",
+    "hitl": "agents",
     "security": "security",
     "ablation": "ablation",
     "operations": "operations",
     "scaling": "operations",
+    "data_failures": "data",
+    "drift": "operations",
+    "risk_coverage": "risk_model",
+    "validation_statistics": "ablation",
 }
 
 
@@ -42,6 +49,14 @@ def run() -> str:
                 for key in ("config_hash", "dataset_hash", "split_identifier", "seed", "hardware_runtime", "status"):
                     if key in row and pd.notna(row[key]):
                         mlflow.set_tag(key, str(row[key]))
+                mlflow.set_tags(
+                    {
+                        "llm_revision": "7ae557604adf67be50417f59c2c2f167def9a775",
+                        "agent_graph_version": "agent-graph-v3",
+                        "tool_schema_version": "1",
+                        "authorization_policy_version": "local-policy-v1",
+                    }
+                )
                 metrics = {}
                 if "metrics" in row and isinstance(row.metrics, str):
                     try:
@@ -51,6 +66,9 @@ def run() -> str:
                 for key, value in metrics.items():
                     if isinstance(value, (int, float)) and pd.notna(value):
                         mlflow.log_metric(key, float(value))
+                for key, value in row.items():
+                    if key not in metrics and isinstance(value, (int, float)) and pd.notna(value):
+                        mlflow.log_metric(str(key), float(value))
                 mlflow.log_artifact(str(artifact), artifact_path="machine_readable_results")
                 recorded.append(
                     {

@@ -22,6 +22,16 @@ def _metrics(frame: pd.DataFrame) -> pd.DataFrame:
     return pd.concat([frame.drop(columns="metrics").reset_index(drop=True), parsed], axis=1)
 
 
+def _wilson_interval(successes: int, total: int, z: float = 1.959963984540054) -> list[float] | None:
+    if total <= 0:
+        return None
+    rate = successes / total
+    denominator = 1 + z**2 / total
+    center = (rate + z**2 / (2 * total)) / denominator
+    radius = z * ((rate * (1 - rate) / total + z**2 / (4 * total**2)) ** 0.5) / denominator
+    return [max(0.0, center - radius), min(1.0, center + radius)]
+
+
 def _save_bar(frame: pd.DataFrame, x: str, y: str, title: str, target: Path) -> None:
     figure, axis = plt.subplots(figsize=(9, 4.8))
     frame.plot.bar(x=x, y=y, ax=axis, legend=False, color="#245b78")
@@ -43,6 +53,17 @@ def _save_line(frame: pd.DataFrame, x: str, y: str, title: str, target: Path, gr
     axis.set_title(title)
     axis.set_xlabel(x.replace("_", " "))
     axis.set_ylabel(y.replace("_", " "))
+    figure.tight_layout()
+    figure.savefig(target, dpi=150)
+    plt.close(figure)
+
+
+def _save_histogram(frame: pd.DataFrame, column: str, title: str, target: Path) -> None:
+    figure, axis = plt.subplots(figsize=(9, 4.8))
+    axis.hist(frame[column], bins=40, color="#245b78")
+    axis.set_title(title)
+    axis.set_xlabel(column.replace("_", " "))
+    axis.set_ylabel("count")
     figure.tight_layout()
     figure.savefig(target, dpi=150)
     plt.close(figure)
@@ -111,6 +132,10 @@ def generate_figures(paths: ProjectPaths) -> list[Path]:
             target,
         ),
     )
+    make(
+        "data_distributions.png",
+        lambda target: _save_histogram(cases, "amount", "Case amount distribution", target),
+    )
     drift = _read(paths, "drift")
     make("temporal_drift.png", lambda target: _save_bar(drift, "signal", "psi", "Observed drift signals", target))
     models = pd.concat([_metrics(_read(paths, "ml_models")), _metrics(_read(paths, "ml_models_advanced"))])
@@ -122,6 +147,18 @@ def generate_figures(paths: ProjectPaths) -> list[Path]:
     make(
         "calibration.png",
         lambda target: _save_bar(calibration, "method", "ece", "Validation calibration error", target),
+    )
+    calibration_bins = _read(paths, "calibration_bins")
+    make(
+        "reliability_curve.png",
+        lambda target: _save_line(
+            calibration_bins,
+            "mean_confidence",
+            "observed_accuracy",
+            "Validation reliability curves",
+            target,
+            "method",
+        ),
     )
     risk = _read(paths, "risk_coverage")
     make(
@@ -214,13 +251,15 @@ def _table(paths: ProjectPaths, stem: str, columns: list[str] | None = None) -> 
         return "No executed artifact was available."
     if columns:
         frame = frame[[column for column in columns if column in frame.columns]]
-    return "```text\n" + frame.to_string(index=False, max_rows=30) + "\n```"
+    return "```text\n" + str(frame.to_string(index=False, max_rows=30)) + "\n```"
 
 
 def generate_documents(paths: ProjectPaths) -> list[Path]:
     final = _read(paths, "final_test")
     decision = str(final.iloc[0].release_decision) if not final.empty else "NOT_YET_EVALUATED"
     final_metrics = json.loads(final.iloc[0].metrics) if not final.empty else {}
+    final_statistics = _read(paths, "final_statistics")
+    final_stat_metrics = json.loads(final_statistics.iloc[0].metrics) if not final_statistics.empty else {}
     sections = {
         "03_data_engineering.md": (
             "Data Engineering",
@@ -264,8 +303,10 @@ def generate_documents(paths: ProjectPaths) -> list[Path]:
         ),
         "11_cost_scaling.md": (
             "Cost and Scaling",
-            "Local measurements; cost is a compute proxy, not a cloud invoice.",
-            "scaling",
+            "Observed latency plus three explicit review/error-cost sensitivity scenarios. Cost is a unitless "
+            "proxy, not a cloud invoice or business-impact estimate. Spark measurements remain in "
+            "results/scaling.parquet.",
+            "business_metrics",
         ),
         "12_final_evaluation.md": (
             "Locked Final Evaluation",
@@ -280,7 +321,8 @@ def generate_documents(paths: ProjectPaths) -> list[Path]:
         "14_limitations.md": (
             "Limitations",
             "Synthetic enterprise truth, small local LLM, smoke-scale agents, local simulation, "
-            "and partial whole-tree typing limit external validity.",
+            "bounded retrieval scale, and limited deep-model repeats constrain external validity. The full source tree "
+            "passes strict static typing, but that does not establish semantic correctness.",
             "data_failures",
         ),
         "15_future_work.md": (
@@ -298,21 +340,100 @@ def generate_documents(paths: ProjectPaths) -> list[Path]:
             encoding="utf-8",
         )
         written.append(target)
+    claims: list[dict[str, object]] = []
+    if final_metrics and final_stat_metrics:
+        claims.append(
+            {
+                "claim": (
+                    "In the one-time locked synthetic holdout, ControlFlow-G achieved a measured Safe Task "
+                    "Completion rate compared with the unrestricted ReAct baseline."
+                ),
+                "baseline": final_stat_metrics["baseline_stc"],
+                "measured_result": final_stat_metrics["candidate_stc"],
+                "effect": final_stat_metrics["paired_stc_difference"],
+                "experiment_id": "final-paired-AG6-vs-AG3",
+                "dataset": "locked deterministic synthetic enterprise holdout",
+                "sample_size": final_stat_metrics["sample_size"],
+                "confidence_interval": [
+                    final_stat_metrics["paired_bootstrap_ci95_low"],
+                    final_stat_metrics["paired_bootstrap_ci95_high"],
+                ],
+                "artifact_path": "results/final_statistics.parquet",
+            }
+        )
+    security = _read(paths, "security")
+    if not security.empty:
+        claims.append(
+            {
+                "claim": "The validation adversarial suite executed all specified S01-S15 scenarios.",
+                "baseline": "not applicable",
+                "measured_result": float(security.blocked.mean()),
+                "experiment_id": "security-AG6-S01..S15",
+                "dataset": "deterministic adversarial validation suite",
+                "sample_size": len(security),
+                "confidence_interval": _wilson_interval(int(security.blocked.sum()), len(security)),
+                "artifact_path": "results/security.parquet",
+            }
+        )
+    operations = _read(paths, "operations")
+    injected = operations[operations.injected] if not operations.empty else operations
+    if not injected.empty:
+        claims.append(
+            {
+                "claim": "Injected validation failure scenarios recovered without duplicate simulated execution.",
+                "baseline": "not applicable",
+                "measured_result": float(injected.recovery_success.mean()),
+                "experiment_id": "reliability-00..10",
+                "dataset": "local fault-injection validation suite",
+                "sample_size": len(injected),
+                "confidence_interval": _wilson_interval(int(injected.recovery_success.sum()), len(injected)),
+                "artifact_path": "results/operations.parquet",
+            }
+        )
     evidence = {
         "generated_at": utc_now(),
         "release_decision": decision,
         "final_metrics": final_metrics,
+        "claims": claims,
         "source_artifact": "results/final_test.parquet" if not final.empty else None,
         "source_sha256": sha256_file(paths.root / "results/final_test.parquet") if not final.empty else None,
     }
     cards = {
         "README.md": (
-            "ControlFlow-G is a local, production-oriented research prototype-not a production deployment. "
-            "See TECHNICAL_REPORT.md for executed evidence."
+            "ControlFlow-G is a governed, production-oriented research prototype for control-exception "
+            "investigation. It combines a local Delta/Spark lakehouse, point-in-time features, calibrated risk "
+            "and anomaly models, temporal hybrid retrieval, typed tools, deterministic authorization, evidence "
+            "verification, HITL, and idempotent simulated actions. It is not a bank system or production "
+            "deployment.\n\n"
+            f"## Frozen result\n\nRelease decision: **{decision}**. Final metrics are machine-readable in "
+            "`results/final_test.parquet`; paired AG6-versus-AG3 inference is in "
+            "`results/final_statistics.parquet`. Negative and null outcomes are retained.\n\n"
+            "## Reproduce\n\nUse Python 3.11 and the pinned `uv.lock`: `uv sync --extra dev`, then "
+            "`uv run pytest -q`, `uv run ruff check src tests scripts`, and `uv run mypy src`. Public acquisition "
+            "is exposed by `python -m controlflow.data.download --help`. Spark/Delta phases use the recorded WSL "
+            "runtime; CUDA phases fail rather than silently fall back. Never invoke P26 after the seal is consumed.\n\n"
+            "## Evidence map\n\nSee `TECHNICAL_REPORT.md`, `REPRODUCIBILITY.md`, reports 00-15, state manifests, "
+            "and Parquet result tables. Generated figures are under `reports/figures/`."
         ),
         "TECHNICAL_REPORT.md": (
-            f"The governed candidate's frozen release decision is **{decision}**. "
-            "All numbers trace to Parquet artifacts under `results/`."
+            f"## Research question\n\nThe study tests whether governed data, model, retrieval, authorization, and "
+            "execution boundaries improve Safe Task Completion over less-constrained agents without assuming a "
+            f"positive result. The frozen decision is **{decision}**.\n\n"
+            "## Executed design\n\nPublic NIST, CFPB, Title 12 CFR, and bounded SEC data were acquired and hashed. "
+            "Deterministic synthetic enterprise truth supplies authorization/action labels. Validation includes "
+            "supervised, anomaly, semi-supervised, calibration, retrieval, agent, security, recovery, scaling, "
+            "ablation, interaction, and paired statistical studies. The final holdout was unlocked once only after "
+            "a clean-tree freeze.\n\n"
+            "## Architecture\n\nIdentity and purpose precede pre-search authorization. Evidence and features are "
+            "point-in-time constrained. The LLM cannot write SQL or authorize itself; typed actions require policy, "
+            "verification, and where necessary a provisioned signed review decision. Action events are idempotent, "
+            "hash chained, HMAC anchored, and rollback-capable in simulation.\n\n"
+            "## Result provenance\n\nEvery quantitative statement is derived from `results/` artifacts and registered "
+            "hashes. The exact final gates are in `configs/release_gates.yaml`; final metrics follow.\n\n"
+            f"{json.dumps(final_metrics, indent=2, sort_keys=True)}\n\n"
+            "## Interpretation\n\nThis is evidence about a deterministic public-data/synthetic benchmark on one "
+            "workstation, not evidence of banking production impact. See reports 03-15 for subsystem tables and "
+            "`reports/14_limitations.md` for validity constraints."
         ),
         "MODEL_CARD.md": (
             "Risk models were trained on deterministic synthetic enterprise cases and evaluated on fixed "
@@ -328,15 +449,21 @@ def generate_documents(paths: ProjectPaths) -> list[Path]:
         ),
         "RISK_REGISTER.md": (
             "Principal risks: synthetic-to-real gap, small qualitative sample, policy simplification, "
-            "untyped experimental boundaries, and simulation-only operations."
+            "bounded local scale, limited deep repeats, and simulation-only operations."
         ),
         "THREAT_MODEL.md": (
             "Trust boundaries cover retrieved content, typed tools, SQL AST validation, runtime identity policy, "
             "signed approvals, and the append-only action chain."
         ),
         "REPRODUCIBILITY.md": (
-            "Use the pinned `uv.lock`, recorded Windows/WSL environments, phase entry points, hashes in `state/`, "
-            "and never rerun P26 after consumption."
+            "## Environment\n\nUse the pinned `uv.lock` and manifests in `state/`. Windows executes CUDA ML; "
+            "Ubuntu 22.04 WSL2 executes Spark 3.5.9/Delta 3.3.2 against the same repository.\n\n"
+            "## Validation\n\nRun `uv run ruff format --check src tests scripts`, `uv run ruff check src tests "
+            "scripts`, `uv run mypy src`, and `uv run pytest -q`. Verify artifact hashes with "
+            "`controlflow.core.state.verify_artifact_manifest()`.\n\n"
+            "## Scientific lock\n\nDataset and split hashes are in `state/data_manifest.json` and "
+            "`state/split_manifest.json`; the candidate identity is in `state/freeze_manifest.json`. P26 is "
+            "fail-closed and must never be rerun after consumption. A material post-final bug requires a new holdout."
         ),
     }
     for filename, summary in cards.items():
@@ -350,9 +477,15 @@ def generate_documents(paths: ProjectPaths) -> list[Path]:
     evidence_target.parent.mkdir(parents=True, exist_ok=True)
     evidence_target.write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     markdown_target = paths.root / "artifacts/resume_evidence.md"
+    claim_lines = [
+        f"- {item['claim']} Baseline: {item['baseline']}; result: {item['measured_result']}; "
+        f"experiment: `{item['experiment_id']}`; n={item['sample_size']}; 95% CI: {item['confidence_interval']}; "
+        f"artifact: `{item['artifact_path']}`."
+        for item in claims
+    ]
     markdown_target.write_text(
-        "# Resume evidence\n\nNo business-impact claim is made. Frozen local evaluation metrics are recorded in "
-        "`results/final_test.parquet` and `artifacts/resume_evidence.json`.\n",
+        "# Resume evidence\n\nThis is a public-data, deterministic-synthetic, production-like simulation. "
+        "No banking production or business-impact claim is made.\n\n" + "\n".join(claim_lines) + "\n",
         encoding="utf-8",
     )
     written.extend([evidence_target, markdown_target])

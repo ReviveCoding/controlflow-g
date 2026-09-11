@@ -2,16 +2,20 @@ from __future__ import annotations
 
 import hashlib
 import secrets
+import subprocess
+import sys
 import time
+from datetime import UTC, datetime
+from typing import Any
 
 import pandas as pd
 from pydantic import BaseModel
 
 from controlflow.audit.ledger import ActionLedger
 from controlflow.authorization.policy import LocalPolicyBackend
-from controlflow.core.state import PhaseRun, ProjectPaths, atomic_write_json, canonical_json, utc_now
+from controlflow.core.state import PhaseRun, ProjectPaths, canonical_json, utc_now
 from controlflow.hitl.approval import ApprovalAuthority
-from controlflow.schemas import IdentityContext, Severity
+from controlflow.schemas import HumanDecision, IdentityContext, ReviewDecision, Severity
 from controlflow.tools.registry import ToolRegistry, ToolSpec
 
 
@@ -31,7 +35,7 @@ def _identity() -> IdentityContext:
     )
 
 
-def _tool_fault(kind: str) -> tuple[bool, int]:
+def _tool_fault(kind: str, tool_name: str = "probe") -> tuple[bool, int]:
     attempts = {"count": 0}
     registry = ToolRegistry(LocalPolicyBackend())
 
@@ -45,7 +49,7 @@ def _tool_fault(kind: str) -> tuple[bool, int]:
 
     registry.register(
         ToolSpec(
-            name="probe",
+            name=tool_name,
             input_model=Probe,
             output_model=Probe,
             risk_tier=0,
@@ -60,7 +64,12 @@ def _tool_fault(kind: str) -> tuple[bool, int]:
     )
     try:
         registry.invoke(
-            "probe", {"value": 1}, identity=_identity(), scope="consumer", data_classification=0, severity=Severity.LOW
+            tool_name,
+            {"value": 1},
+            identity=_identity(),
+            scope="consumer",
+            data_classification=0,
+            severity=Severity.LOW,
         )
     except RuntimeError:
         return len(registry.audit_events) == 2, attempts["count"] - 1
@@ -70,7 +79,9 @@ def _tool_fault(kind: str) -> tuple[bool, int]:
 def run() -> str:
     paths = ProjectPaths.discover()
     ledger = ActionLedger(paths.root / "artifacts/reliability_action_ledger_v2.sqlite")
-    authority = ApprovalAuthority(secrets.token_bytes(32))
+    authority = ApprovalAuthority(
+        secrets.token_bytes(32), reviewer_entitlements={"reviewer": ("Risk Manager", "enterprise")}
+    )
     rows = []
     with PhaseRun("P20", paths) as phase:
         for index, failure in enumerate(
@@ -91,54 +102,170 @@ def run() -> str:
             started = time.perf_counter()
             retries = 0
             duplicate = False
-            detected = True
+            detected = False
+            injected = False
+            status = "not_run"
             if "timeout" in failure.casefold():
-                recovery, retries = _tool_fault("timeout")
+                boundary = {
+                    "LLM timeout": "llm_inference",
+                    "retrieval timeout": "retrieval_search",
+                    "SQL timeout": "readonly_sql_query",
+                }[failure]
+                recovery, retries = _tool_fault("timeout", boundary)
+                detected, injected, status = recovery, True, "ok"
             elif failure == "model unavailable":
                 recovery, retries = _tool_fault("unavailable")
+                detected, injected, status = recovery, True, "ok"
             elif failure in {"agent crash", "partial pipeline failure", "checkpoint recovery"}:
                 checkpoint = paths.root / f"build/fault-checkpoint-{index}.json"
-                atomic_write_json(checkpoint, {"step": "before_fault", "case_id": f"fault-{index}"})
+                process = subprocess.run(
+                    [
+                        sys.executable,
+                        "-m",
+                        "controlflow.eval.recovery_worker",
+                        "checkpoint",
+                        str(checkpoint),
+                        f"fault-{index}",
+                    ],
+                    check=False,
+                    timeout=20,
+                )
                 recovered = pd.read_json(checkpoint, typ="series")
-                recovery = recovered["step"] == "before_fault"
+                recovery = process.returncode == 91 and recovered["step"] == "before_fault"
+                detected, injected, status = process.returncode == 91, True, "ok"
                 retries = 1
             else:
-                args = dict(
+                args: dict[str, Any] = dict(
                     case_id=f"fault-{index}",
                     action_type="case_update",
                     payload={"state": "investigated"},
-                    workflow_version="v2",
+                    workflow_version="v3",
                 )
                 evidence_hash = "fault-evidence"
                 if failure == "crash before approval":
+                    process = subprocess.run(
+                        [
+                            sys.executable,
+                            "-m",
+                            "controlflow.eval.recovery_worker",
+                            "review",
+                            str(ledger.path),
+                            args["case_id"],
+                        ],
+                        check=False,
+                        timeout=20,
+                    )
                     pending = ledger.request_review(**args)
-                    token = authority.issue(
-                        **args, reviewer_id="reviewer", policy_version="local-policy-v1", evidence_hash=evidence_hash
-                    )
-                    receipt = ledger.execute_simulated(
-                        **args, authorization_token=token, approval_authority=authority, evidence_hash=evidence_hash
-                    )
-                    recovery = pending.status == "PENDING_REVIEW" and receipt.executed
+                    if pending.status == "EXECUTED":
+                        recovery = True
+                    else:
+                        token = authority.issue(
+                            **args,
+                            reviewer_id="reviewer",
+                            reviewer_role="Risk Manager",
+                            reviewer_scope="enterprise",
+                            decision=ReviewDecision.APPROVE,
+                            policy_version="local-policy-v1",
+                            evidence_hash=evidence_hash,
+                        )
+                        ledger.record_review(
+                            pending.action_id,
+                            HumanDecision(
+                                reviewer_id="reviewer",
+                                reviewer_role="Risk Manager",
+                                reviewer_scope="enterprise",
+                                decision=ReviewDecision.APPROVE,
+                                decided_at=datetime.now(UTC),
+                                bound_action_hash=pending.idempotency_key,
+                            ),
+                            authorization_token=token,
+                            approval_authority=authority,
+                            policy_version="local-policy-v1",
+                            evidence_hash=evidence_hash,
+                        )
+                        receipt = ledger.execute_simulated(
+                            **args,
+                            authorization_token=token,
+                            approval_authority=authority,
+                            evidence_hash=evidence_hash,
+                        )
+                        recovery = pending.status == "PENDING_REVIEW" and receipt.executed
+                    detected, injected, status = process.returncode == 91, True, "ok"
                 elif failure == "crash after approval":
-                    token = authority.issue(
-                        **args, reviewer_id="reviewer", policy_version="local-policy-v1", evidence_hash=evidence_hash
+                    secret = secrets.token_bytes(32)
+                    process = subprocess.run(
+                        [
+                            sys.executable,
+                            "-m",
+                            "controlflow.eval.recovery_worker",
+                            "approval",
+                            str(ledger.path),
+                            args["case_id"],
+                            "--secret",
+                            secret.hex(),
+                        ],
+                        check=False,
+                        timeout=20,
+                    )
+                    action_authority = ApprovalAuthority(
+                        secret, reviewer_entitlements={"reviewer": ("Risk Manager", "enterprise")}
+                    )
+                    token = action_authority.issue(
+                        **args,
+                        reviewer_id="reviewer",
+                        reviewer_role="Risk Manager",
+                        reviewer_scope="enterprise",
+                        decision=ReviewDecision.APPROVE,
+                        policy_version="local-policy-v1",
+                        evidence_hash=evidence_hash,
                     )
                     receipt = ledger.execute_simulated(
-                        **args, authorization_token=token, approval_authority=authority, evidence_hash=evidence_hash
+                        **args,
+                        authorization_token=token,
+                        approval_authority=action_authority,
+                        evidence_hash=evidence_hash,
                     )
-                    recovery = receipt.status == "EXECUTED"
+                    recovery = receipt.executed or receipt.status == "EXECUTED"
+                    detected, injected, status = process.returncode == 91, True, "ok"
                 else:
-                    token = authority.issue(
-                        **args, reviewer_id="SYSTEM_AUTO", policy_version="local-policy-v1", evidence_hash=evidence_hash
+                    secret = secrets.token_bytes(32)
+                    process = subprocess.run(
+                        [
+                            sys.executable,
+                            "-m",
+                            "controlflow.eval.recovery_worker",
+                            "action",
+                            str(ledger.path),
+                            args["case_id"],
+                            "--secret",
+                            secret.hex(),
+                        ],
+                        check=False,
+                        timeout=20,
+                    )
+                    action_authority = ApprovalAuthority(secret)
+                    token = action_authority.issue_system(
+                        **args,
+                        policy_version="local-policy-v1",
+                        evidence_hash=evidence_hash,
+                        risk_tier=1,
+                        authorization_outcome="ALLOW",
                     )
                     first = ledger.execute_simulated(
-                        **args, authorization_token=token, approval_authority=authority, evidence_hash=evidence_hash
+                        **args,
+                        authorization_token=token,
+                        approval_authority=action_authority,
+                        evidence_hash=evidence_hash,
                     )
                     second = ledger.execute_simulated(
-                        **args, authorization_token=token, approval_authority=authority, evidence_hash=evidence_hash
+                        **args,
+                        authorization_token=token,
+                        approval_authority=action_authority,
+                        evidence_hash=evidence_hash,
                     )
                     duplicate = second.executed
                     recovery = (first.executed or first.status == "EXECUTED") and not duplicate
+                    detected, injected, status = process.returncode == 91, True, "ok"
                 retries = 1
             rows.append(
                 {
@@ -149,9 +276,9 @@ def run() -> str:
                     "seed": 17,
                     "hardware_runtime": "CPU",
                     "timestamp": utc_now(),
-                    "status": "ok",
+                    "status": status,
                     "failure": failure,
-                    "injected": True,
+                    "injected": injected,
                     "detected": detected,
                     "recovery_success": bool(recovery),
                     "duplicate_execution": duplicate,

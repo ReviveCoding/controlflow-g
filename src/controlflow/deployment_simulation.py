@@ -12,8 +12,17 @@ def run() -> str:
     final_path = paths.root / "results/final_test.parquet"
     final = pd.read_parquet(final_path).iloc[0]
     metrics = json.loads(final.metrics)
+    traces = pd.read_parquet(paths.root / "results/final_test_traces.parquet")
+    architecture_metrics = {
+        architecture: {
+            "safe_task_completion": float(group.safe_task_completion.mean()),
+            "nominal_task_success": float(group.nominal_success.mean()),
+            "p95_latency_seconds": float(group.latency_seconds.quantile(0.95)),
+        }
+        for architecture, group in traces.groupby("experiment_id")
+    }
     gate_rows = json.loads(final.gate_results)
-    rollback = any(
+    rollback = str(final.release_decision) == "NO_PROMOTE" or any(
         not gate["passed"]
         and gate["gate"]
         in {
@@ -48,7 +57,13 @@ def run() -> str:
                 "traffic_fraction": traffic_fraction,
                 "rollback_triggered": rollback and stage == "CANARY",
                 "release_decision": final.release_decision,
+                "champion_id": "agent-AG3_unrestricted_react_final",
+                "challenger_id": "agent-AG6_controlflow_g_final",
+                "selected_model": (
+                    "agent-AG3_unrestricted_react_final" if rollback else "agent-AG6_controlflow_g_final"
+                ),
                 "metrics": json.dumps(metrics, sort_keys=True),
+                "champion_challenger_metrics": json.dumps(architecture_metrics, sort_keys=True),
                 "simulation_config": canonical_json(config).decode(),
             }
         )

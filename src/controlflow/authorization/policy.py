@@ -32,6 +32,17 @@ class LocalPolicyBackend:
         reasons: list[str] = []
         if not identity.purpose.strip():
             reasons.append("missing_purpose")
+        if identity.purpose not in {
+            "control exception investigation",
+            "control investigation",
+            "investigation",
+            "reliability test",
+        }:
+            reasons.append("purpose_not_entitled")
+        if identity.region != "US":
+            reasons.append("region_not_allowed")
+        if not identity.session_id.strip():
+            reasons.append("invalid_session")
         if identity.role not in request.allowed_roles:
             reasons.append("role_not_allowed")
         if request.requested_scope not in request.allowed_scopes:
@@ -56,7 +67,9 @@ class LocalPolicyBackend:
                 policy_version=self.version,
                 reasons=tuple(sorted(reasons)),
             )
-        if request.requires_review or request.risk_tier >= 2 or request.case_severity is Severity.CRITICAL:
+        if not request.read_only and (
+            request.requires_review or request.risk_tier >= 2 or request.case_severity is Severity.CRITICAL
+        ):
             return AuthorizationResult(
                 outcome=AuthorizationOutcome.REQUIRE_REVIEW,
                 policy_version=self.version,

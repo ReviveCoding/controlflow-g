@@ -25,19 +25,12 @@ def create_splits(frame: pd.DataFrame) -> dict[str, list[str]]:
     adversarial = ordered.loc[ordered["is_adversarial"], "case_id"].tolist()
     ood = ordered.loc[ordered["is_ood"] & ~ordered["is_adversarial"], "case_id"].tolist()
     eligible = ordered.loc[~ordered["is_adversarial"] & ~ordered["is_ood"]].copy()
-    entities = sorted(eligible["entity_id"].unique())
-    held_entities = set(entities[::7])
-    entity_disjoint = eligible.loc[eligible["entity_id"].isin(held_entities), "case_id"].tolist()
-    eligible = eligible.loc[~eligible["entity_id"].isin(held_entities)]
-    cut1 = int(len(eligible) * 0.65)
-    cut2 = int(len(eligible) * 0.80)
-    cut3 = int(len(eligible) * 0.90)
     return {
-        "train": eligible.iloc[:cut1]["case_id"].tolist(),
-        "validation": eligible.iloc[cut1:cut2]["case_id"].tolist(),
-        "temporal_test": eligible.iloc[cut2:cut3]["case_id"].tolist(),
-        "locked_final_test": eligible.iloc[cut3:]["case_id"].tolist(),
-        "entity_disjoint": entity_disjoint,
+        "train": eligible.loc[eligible.template_family.isin([0, 1, 2, 3]), "case_id"].tolist(),
+        "validation": eligible.loc[eligible.template_family.eq(4), "case_id"].tolist(),
+        "temporal_test": eligible.loc[eligible.template_family.eq(5), "case_id"].tolist(),
+        "locked_final_test": eligible.loc[eligible.template_family.eq(6), "case_id"].tolist(),
+        "entity_disjoint": eligible.loc[eligible.template_family.eq(7), "case_id"].tolist(),
         "ood": ood,
         "adversarial": adversarial,
         "stratified_sanity": ordered.groupby("severity", group_keys=False).head(10)["case_id"].tolist(),
@@ -76,7 +69,7 @@ def write_splits(frame: pd.DataFrame) -> None:
         "status": "created_sealed",
         "sealed_final_test": True,
         "split_algorithm_sha256": hashlib.sha256(
-            canonical_json({"version": 1, "algorithm": "temporal_entity"})
+            canonical_json({"version": 2, "algorithm": "template-family/entity/ood separated"})
         ).hexdigest(),
         "splits": records,
     }
@@ -115,14 +108,25 @@ def run() -> str:
         if frame["case_id"].duplicated().any():
             raise ValueError("duplicate case IDs")
         normalized = (
-            frame["narrative"].str.casefold().str.replace(r"\d+", "#", regex=True).str.replace(r"\s+", " ", regex=True)
+            frame["narrative"]
+            .str.casefold()
+            .str.replace(r"reference\s+[a-z]+", "", regex=True)
+            .str.replace(r"\d+(?:\.\d+)?", "#", regex=True)
+            .str.replace(r"\s+", " ", regex=True)
         )
         duplicate_groups = normalized.groupby(normalized).groups
+        proposed = create_splits(frame)
+        membership = {
+            case_id: name
+            for name, identifiers in proposed.items()
+            if name != "stratified_sanity"
+            for case_id in identifiers
+        }
         if any(
-            len(indices) > 1 and frame.loc[list(indices), "entity_id"].nunique() > 1
+            len({membership.get(str(frame.loc[index, "case_id"])) for index in indices}) > 1
             for indices in duplicate_groups.values()
         ):
-            raise ValueError("cross-entity near-duplicate narratives detected")
+            raise ValueError("cross-split near-duplicate narratives detected")
         auto = frame[frame["expected_disposition"] == "AUTO"]
         if not auto["expected_actions"].map(lambda actions: set(actions).issubset(set(["propose_case_update"]))).all():
             raise ValueError("benchmark action truth is inconsistent")

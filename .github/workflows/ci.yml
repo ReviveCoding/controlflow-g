@@ -11,9 +11,5 @@ jobs:
       - run: uv sync --extra dev
       - run: uv run ruff format --check src tests scripts
       - run: uv run ruff check src tests scripts
-      - run: >-
-          uv run mypy --follow-imports=skip
-          src/controlflow/core src/controlflow/authorization src/controlflow/audit
-          src/controlflow/hitl src/controlflow/tools src/controlflow/verification
-          src/controlflow/data/splits.py src/controlflow/release.py
+      - run: uv run mypy src
       - run: uv run pytest -q -m "not gpu and not spark and not network and not sealed"

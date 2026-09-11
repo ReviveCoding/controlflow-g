@@ -3,8 +3,11 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import pytest
+
 from controlflow.audit.ledger import ActionLedger
-from controlflow.hitl.approval import ApprovalAuthority
+from controlflow.hitl.approval import ApprovalAuthority, InvalidApproval
+from controlflow.schemas import HumanDecision, ProposedAction, ReviewDecision
 
 
 def test_duplicate_action_executes_once(tmp_path: Path) -> None:
@@ -15,12 +18,13 @@ def test_duplicate_action_executes_once(tmp_path: Path) -> None:
         "payload": {"status": "investigated"},
         "workflow_version": "v1",
     }
-    authority = ApprovalAuthority(b"test-secret")
-    kwargs["authorization_token"] = authority.issue(
+    authority = ApprovalAuthority(b"test-secret", reviewer_entitlements={"reviewer-1": ("Risk Manager", "enterprise")})
+    kwargs["authorization_token"] = authority.issue_system(
         **{key: kwargs[key] for key in ("case_id", "action_type", "payload", "workflow_version")},
-        reviewer_id="SYSTEM_AUTO",
         policy_version="local-policy-v1",
         evidence_hash="none",
+        risk_tier=1,
+        authorization_outcome="ALLOW",
     )
     kwargs["approval_authority"] = authority
     with ThreadPoolExecutor(max_workers=8) as pool:
@@ -49,9 +53,32 @@ def test_pending_action_can_be_approved_exactly_once(tmp_path: Path) -> None:
         payload={"status": "closed"},
         workflow_version="v1",
     )
-    authority = ApprovalAuthority(b"test-secret")
+    authority = ApprovalAuthority(b"test-secret", reviewer_entitlements={"reviewer-1": ("Risk Manager", "enterprise")})
     pending = ledger.request_review(**arguments)
-    token = authority.issue(**arguments, reviewer_id="reviewer-1", policy_version="local-policy-v1", evidence_hash="ev")
+    token = authority.issue(
+        **arguments,
+        reviewer_id="reviewer-1",
+        reviewer_role="Risk Manager",
+        reviewer_scope="enterprise",
+        decision=ReviewDecision.APPROVE,
+        policy_version="local-policy-v1",
+        evidence_hash="ev",
+    )
+    ledger.record_review(
+        pending.action_id,
+        HumanDecision(
+            reviewer_id="reviewer-1",
+            reviewer_role="Risk Manager",
+            reviewer_scope="enterprise",
+            decision=ReviewDecision.APPROVE,
+            decided_at=__import__("datetime").datetime.now(__import__("datetime").UTC),
+            bound_action_hash=pending.idempotency_key,
+        ),
+        authorization_token=token,
+        approval_authority=authority,
+        policy_version="local-policy-v1",
+        evidence_hash="ev",
+    )
     approved = ledger.execute_simulated(
         **arguments, authorization_token=token, approval_authority=authority, evidence_hash="ev"
     )
@@ -61,3 +88,102 @@ def test_pending_action_can_be_approved_exactly_once(tmp_path: Path) -> None:
     assert pending.status == "PENDING_REVIEW"
     assert approved.executed is True and approved.status == "EXECUTED"
     assert replay.executed is False and replay.action_id == approved.action_id
+    assert ledger.verify_event_chain()
+    rolled_back = ledger.rollback(approved.action_id, actor_id="risk-manager", reason="validation rollback")
+    assert rolled_back.status == "ROLLED_BACK"
+    assert ledger.verify_event_chain()
+
+
+def test_audit_anchor_detects_truncation(tmp_path: Path) -> None:
+    ledger = ActionLedger(tmp_path / "ledger.sqlite")
+    ledger.request_review(
+        case_id="case-anchor", action_type="case_update", payload={"status": "pending"}, workflow_version="v1"
+    )
+    with ledger._connect() as connection:
+        connection.execute("DELETE FROM action_events")
+    assert not ledger.verify_event_chain()
+
+
+def test_unprovisioned_reviewer_cannot_self_assert_entitlement() -> None:
+    authority = ApprovalAuthority(b"test-secret")
+    with pytest.raises(InvalidApproval, match="not provisioned"):
+        authority.issue(
+            case_id="case-spoof",
+            action_type="case_update",
+            payload={"status": "closed"},
+            workflow_version="v1",
+            reviewer_id="attacker",
+            reviewer_role="Risk Manager",
+            reviewer_scope="enterprise",
+            decision=ReviewDecision.APPROVE,
+            policy_version="local-policy-v1",
+            evidence_hash="ev",
+        )
+
+
+def test_edited_review_requires_fresh_approval_for_edited_action(tmp_path: Path) -> None:
+    ledger = ActionLedger(tmp_path / "edited.sqlite")
+    authority = ApprovalAuthority(b"test-secret", reviewer_entitlements={"reviewer-1": ("Risk Manager", "enterprise")})
+    original = dict(case_id="case-edit", action_type="case_update", payload={"status": "closed"}, workflow_version="v1")
+    pending = ledger.request_review(**original)
+    edit_token = authority.issue(
+        **original,
+        reviewer_id="reviewer-1",
+        reviewer_role="Risk Manager",
+        reviewer_scope="enterprise",
+        decision=ReviewDecision.EDIT,
+        policy_version="local-policy-v1",
+        evidence_hash="ev",
+    )
+    edited_action = ProposedAction(
+        action_type="case_update", payload={"status": "investigated"}, risk_tier=2, rollback_available=True
+    )
+    edited = ledger.record_review(
+        pending.action_id,
+        HumanDecision(
+            reviewer_id="reviewer-1",
+            reviewer_role="Risk Manager",
+            reviewer_scope="enterprise",
+            decision=ReviewDecision.EDIT,
+            decided_at=__import__("datetime").datetime.now(__import__("datetime").UTC),
+            bound_action_hash=pending.idempotency_key,
+            edited_action=edited_action,
+        ),
+        authorization_token=edit_token,
+        approval_authority=authority,
+        policy_version="local-policy-v1",
+        evidence_hash="ev",
+    )
+    assert edited.status == "PENDING_REVIEW" and edited.idempotency_key != pending.idempotency_key
+    edited_arguments = {**original, "payload": edited_action.payload}
+    approve_token = authority.issue(
+        **edited_arguments,
+        reviewer_id="reviewer-1",
+        reviewer_role="Risk Manager",
+        reviewer_scope="enterprise",
+        decision=ReviewDecision.APPROVE,
+        policy_version="local-policy-v1",
+        evidence_hash="ev",
+    )
+    ledger.record_review(
+        pending.action_id,
+        HumanDecision(
+            reviewer_id="reviewer-1",
+            reviewer_role="Risk Manager",
+            reviewer_scope="enterprise",
+            decision=ReviewDecision.APPROVE,
+            decided_at=__import__("datetime").datetime.now(__import__("datetime").UTC),
+            bound_action_hash=edited.idempotency_key,
+        ),
+        authorization_token=approve_token,
+        approval_authority=authority,
+        policy_version="local-policy-v1",
+        evidence_hash="ev",
+    )
+    executed = ledger.execute_simulated(
+        **edited_arguments,
+        authorization_token=approve_token,
+        approval_authority=authority,
+        evidence_hash="ev",
+    )
+    assert executed.executed and ledger.verify_event_chain()

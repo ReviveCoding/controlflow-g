@@ -124,6 +124,8 @@ class AuthorizationResult(FrozenModel):
 
 class HumanDecision(FrozenModel):
     reviewer_id: str
+    reviewer_role: str
+    reviewer_scope: str
     decision: ReviewDecision
     decided_at: datetime
     bound_action_hash: str
