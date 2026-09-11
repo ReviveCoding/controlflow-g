@@ -235,7 +235,7 @@ class GovernedWorkflow:
                     evidence_id=str(control.control_id),
                     source="NIST SP 800-53",
                     text=text,
-                    classification=0,
+                    classification=int(getattr(control, "classification", 0)),
                     business_valid_from=origin,
                     system_known_from=origin,
                     authorized_roles=frozenset({"Control Analyst", "Risk Manager", "Compliance Reviewer"}),
@@ -276,6 +276,22 @@ class GovernedWorkflow:
         if resource_scope != identity.business_unit:
             raise PermissionError("authenticated session is not entitled to the case resource scope")
         return resource_scope
+
+    def _transaction_result(self, row: pd.Series, identity: IdentityContext) -> StructuredResult:
+        classification = self.transactions.get("classification", pd.Series(0, index=self.transactions.index)).astype(
+            int
+        )
+        selected = self.transactions.loc[
+            self.transactions["entity_id"].eq(str(row.entity_id))
+            & (self.transactions["event_timestamp"] <= pd.Timestamp(row.event_timestamp))
+            & classification.le(identity.clearance)
+        ].sort_values("event_timestamp")
+        return StructuredResult(
+            values={
+                "transaction_ids": selected.tail(20)["transaction_id"].astype(str).tolist(),
+                "transaction_count": len(selected),
+            }
+        )
 
     def _evidence(
         self, row: pd.Series, config: WorkflowConfig, identity: IdentityContext
@@ -400,9 +416,13 @@ class GovernedWorkflow:
             )
 
         def query_transactions(_request: CaseLookupInput) -> StructuredResult:
+            classification = self.transactions.get(
+                "classification", pd.Series(0, index=self.transactions.index)
+            ).astype(int)
             as_of = self.transactions.loc[
                 self.transactions["entity_id"].eq(str(row.entity_id))
                 & (self.transactions["event_timestamp"] <= pd.Timestamp(row.event_timestamp))
+                & classification.le(identity.clearance)
             ].sort_values("event_timestamp")
             recent = as_of.tail(20)
             return StructuredResult(
@@ -823,24 +843,7 @@ class GovernedWorkflow:
                 (
                     "query_transactions",
                     StructuredResult,
-                    lambda _: StructuredResult(
-                        values={
-                            "transaction_ids": self.transactions.loc[
-                                self.transactions["entity_id"].eq(str(row.entity_id))
-                                & (self.transactions["event_timestamp"] <= pd.Timestamp(row.event_timestamp))
-                            ]
-                            .sort_values("event_timestamp")
-                            .tail(20)["transaction_id"]
-                            .astype(str)
-                            .tolist(),
-                            "transaction_count": int(
-                                (
-                                    self.transactions["entity_id"].eq(str(row.entity_id))
-                                    & (self.transactions["event_timestamp"] <= pd.Timestamp(row.event_timestamp))
-                                ).sum()
-                            ),
-                        }
-                    ),
+                    lambda _: self._transaction_result(row, identity),
                 ),
                 (
                     "generate_evidence_bundle",

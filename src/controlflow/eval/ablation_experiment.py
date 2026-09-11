@@ -49,8 +49,8 @@ def run() -> str:
     identity_provider, session_credentials = SessionIdentityProvider.issue_for_business_units(
         set(frame["business_unit"].astype(str))
     )
-    trace_target = paths.root / "results/ablation_traces.inprogress.parquet"
-    summary_target = paths.root / "results/ablation.inprogress.parquet"
+    trace_target = paths.root / "results/ablation_traces.repeat7.inprogress.parquet"
+    summary_target = paths.root / "results/ablation.repeat7.inprogress.parquet"
     traces: list[dict[str, object]] = []
     summaries: list[dict[str, object]] = []
     completed: set[str] = set()
@@ -68,7 +68,7 @@ def run() -> str:
             workflow = GovernedWorkflow(
                 train,
                 controls,
-                ActionLedger(paths.root / f"artifacts/ablation_{name}_action_ledger_v7.sqlite"),
+                ActionLedger(paths.root / f"artifacts/ablation_{name}_action_ledger_v8.sqlite"),
                 ApprovalAuthority(secrets.token_bytes(32)),
                 risk_service=risk_service,
                 state_dir=paths.root / f"artifacts/ablation_graph_state_v4/{name}",

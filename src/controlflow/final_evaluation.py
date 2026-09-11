@@ -39,6 +39,9 @@ def run_final_once() -> str:
     missing = PIT_RAW_COLUMNS.difference(columns)
     if missing:
         raise ValueError(f"locked holdout PIT schema is incomplete: {sorted(missing)}")
+    # Fail before the irreversible seal transition if signed audit checkpoints
+    # cannot be atomically persisted and read back in this runtime.
+    ActionLedger.probe_trust_store()
     consume_seal(paths)  # fail closed: a crash consumes this research holdout
     os.environ["CONTROLFLOW_UNLOCK_FINAL"] = "P26"
     final_ids = set(load_split("locked_final_test", phase="P26"))
@@ -57,7 +60,7 @@ def run_final_once() -> str:
         name: GovernedWorkflow(
             development,
             controls,
-            ActionLedger(paths.root / f"artifacts/final_{name}_action_ledger_v6.sqlite"),
+            ActionLedger(paths.root / f"artifacts/final_{name}_action_ledger_v7.sqlite"),
             ApprovalAuthority(secrets.token_bytes(32)),
             risk_service=frozen_risk,
             state_dir=paths.root / f"artifacts/final_graph_state_v3/{name}",

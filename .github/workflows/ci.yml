@@ -5,6 +5,8 @@ on:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    env:
+      CONTROLFLOW_AUDIT_TRUST_DIR: ${{ github.workspace }}/state/audit_trust
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6

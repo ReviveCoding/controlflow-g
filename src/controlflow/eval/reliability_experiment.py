@@ -105,7 +105,7 @@ def _tool_fault(kind: str, tool_name: str = "probe") -> tuple[bool, int]:
 
 def run() -> str:
     paths = ProjectPaths.discover()
-    ledger = ActionLedger(paths.root / "artifacts/reliability_action_ledger_v8.sqlite")
+    ledger = ActionLedger(paths.root / "artifacts/reliability_action_ledger_v9.sqlite")
     authority = ApprovalAuthority(
         secrets.token_bytes(32), reviewer_entitlements={"reviewer": ("Risk Manager", "enterprise")}
     )
@@ -160,7 +160,7 @@ def run() -> str:
                 detected, injected, status = recovery, True, "ok"
             elif failure in {"agent crash", "partial pipeline failure", "checkpoint recovery"}:
                 checkpoint = paths.root / f"build/fault-checkpoint-{index}.json"
-                workflow_ledger = paths.root / f"artifacts/reliability_workflow_v8_{index}.sqlite"
+                workflow_ledger = paths.root / f"artifacts/reliability_workflow_v9_{index}.sqlite"
                 process = subprocess.run(
                     [
                         sys.executable,

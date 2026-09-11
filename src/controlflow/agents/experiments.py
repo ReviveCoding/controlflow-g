@@ -357,7 +357,7 @@ def run_agents(only: frozenset[str] | None = None) -> str:
         name: GovernedWorkflow(
             train,
             controls,
-            ActionLedger(paths.root / f"artifacts/agent_{name}_action_ledger_protocol7.sqlite"),
+            ActionLedger(paths.root / f"artifacts/agent_{name}_action_ledger_protocol8.sqlite"),
             ApprovalAuthority(secrets.token_bytes(32)),
             risk_service=risk_service,
             state_dir=paths.root / f"artifacts/graph_state_v3/{name}",

@@ -14,7 +14,7 @@ from typing import Any, TypeVar, cast
 
 from filelock import FileLock
 
-from controlflow.core.state import atomic_write_json, canonical_json, utc_now
+from controlflow.core.state import ProjectPaths, atomic_write_json, canonical_json, utc_now
 from controlflow.schemas import HumanDecision, ReviewDecision
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -50,11 +50,11 @@ class ActionReceipt:
 class ActionLedger:
     """SQLite transaction makes duplicate/resumed simulated actions exactly-once locally."""
 
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, *, recovery_authority: Any | None = None) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         self.path = path
         # Trust material is deliberately outside the mutable ledger directory.
-        default_trust = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "ControlFlow-G" / "audit-trust"
+        default_trust = ProjectPaths.discover().state / "audit_trust"
         trust = Path(os.environ.get("CONTROLFLOW_AUDIT_TRUST_DIR", str(default_trust)))
         trust.mkdir(parents=True, exist_ok=True)
         self.protocol_lock = FileLock(str(path) + ".audit-protocol.lock")
@@ -62,6 +62,7 @@ class ActionLedger:
         ledger_name = hashlib.sha256(str(path.resolve()).encode()).hexdigest()
         self.head_path = trust / f"{ledger_name}.head.json"
         self.system_head_path = trust / f"{ledger_name}.system.head.json"
+        self.recovery_authority = recovery_authority
         with self.protocol_lock:
             if not self.key_path.exists():
                 self.key_path.write_bytes(secrets.token_bytes(32))
@@ -111,6 +112,24 @@ class ActionLedger:
     def _write_system_anchor(self, event_hash: str) -> None:
         signature = hmac.new(self.key_path.read_bytes(), event_hash.encode(), hashlib.sha256).hexdigest()
         atomic_write_json(self.system_head_path, {"event_hash": event_hash, "signature": signature})
+
+    @classmethod
+    def probe_trust_store(cls) -> Path:
+        """Prove atomic durable I/O for the exact configured trust root."""
+        trust = Path(os.environ.get("CONTROLFLOW_AUDIT_TRUST_DIR", str(ProjectPaths.discover().state / "audit_trust")))
+        trust.mkdir(parents=True, exist_ok=True)
+        probe = trust / ".preflight-probe"
+        temporary = trust / ".preflight-probe.tmp"
+        payload = secrets.token_bytes(32)
+        with temporary.open("wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, probe)
+        if probe.read_bytes() != payload:
+            raise OSError("audit trust-store readback mismatch")
+        probe.unlink()
+        return trust
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, isolation_level=None, timeout=10)
@@ -274,14 +293,15 @@ class ActionLedger:
         self,
         *,
         authorization_token: str,
-        approval_authority: Any,
         actor_id: str,
         reason: str,
     ) -> None:
         """Recover crash-window anchors only with an independently signed approval."""
         payload, evidence_hash = self.recovery_binding(reason)
         recovery_key = action_key("AUDIT-RECOVERY", "reconcile_audit_anchors", payload, "audit-protocol-v1")
-        approval = approval_authority.verify(
+        if self.recovery_authority is None:
+            raise PermissionError("no trusted audit-recovery verifier is configured")
+        approval = self.recovery_authority.verify(
             authorization_token,
             expected_action_key=recovery_key,
             policy_version="audit-recovery-v1",

@@ -54,17 +54,16 @@ class DurableWorkflowRunner:
         prediction: tuple[str, str, bool],
         *,
         session_token: str,
-        recovery_approval: tuple[object, str, str, str] | None = None,
+        recovery_approval: tuple[str, str, str] | None = None,
     ) -> WorkflowTrace:
         # Explicit recovery reconciles a committed audit event whose external
         # signed checkpoint could not be exported before process death.
         if not self.workflow.ledger.verify_event_chain() or not self.workflow.ledger.verify_system_event_chain():
             if recovery_approval is None:
                 raise RuntimeError("audit recovery requires a separately supplied operator approval")
-            authority, token, actor_id, reason = recovery_approval
+            token, actor_id, reason = recovery_approval
             self.workflow.ledger.reconcile_external_anchors(
                 authorization_token=token,
-                approval_authority=authority,
                 actor_id=actor_id,
                 reason=reason,
             )

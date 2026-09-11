@@ -10,10 +10,15 @@ from controlflow.hitl.approval import ApprovalAuthority, InvalidApproval
 from controlflow.schemas import HumanDecision, ProposedAction, ReviewDecision
 
 
-def _approve_recovery(ledger: ActionLedger, reason: str = "diagnosed crash window") -> None:
-    authority = ApprovalAuthority(
+def _recovery_authority() -> ApprovalAuthority:
+    return ApprovalAuthority(
         b"recovery-secret", reviewer_entitlements={"recovery-reviewer": ("Risk Manager", "enterprise")}
     )
+
+
+def _approve_recovery(
+    ledger: ActionLedger, authority: ApprovalAuthority, reason: str = "diagnosed crash window"
+) -> None:
     payload, evidence_hash = ledger.recovery_binding(reason)
     token = authority.issue(
         case_id="AUDIT-RECOVERY",
@@ -29,7 +34,6 @@ def _approve_recovery(ledger: ActionLedger, reason: str = "diagnosed crash windo
     )
     ledger.reconcile_external_anchors(
         authorization_token=token,
-        approval_authority=authority,
         actor_id="recovery-reviewer",
         reason=reason,
     )
@@ -210,18 +214,55 @@ def test_durable_system_audit_chain_detects_tampering(tmp_path: Path) -> None:
 
 
 def test_corrupt_external_anchor_fails_closed_until_explicit_reconciliation(tmp_path: Path) -> None:
-    ledger = ActionLedger(tmp_path / "fail-closed.sqlite")
+    recovery_authority = _recovery_authority()
+    ledger = ActionLedger(tmp_path / "fail-closed.sqlite", recovery_authority=recovery_authority)
     ledger.record_system_event("TOOL_CALL", "analyst", {"tool": "search_controls"})
     ledger.system_head_path.write_text('{"event_hash":"bad","signature":"bad"}', encoding="utf-8")
     with pytest.raises(RuntimeError, match="audit chain failed closed"):
         ledger.record_system_event("TOOL_CALL", "analyst", {"tool": "search_cases"})
-    _approve_recovery(ledger)
+    _approve_recovery(ledger, recovery_authority)
     assert ledger.verify_system_event_chain()
     with ledger._connect() as connection:
         recovered = connection.execute(
             "SELECT 1 FROM system_audit_events WHERE event_type='AUDIT_ANCHOR_RECOVERY'"
         ).fetchone()
     assert recovered is not None
+
+
+def test_recovery_rejects_token_from_caller_selected_authority(tmp_path: Path) -> None:
+    trusted = _recovery_authority()
+    ledger = ActionLedger(tmp_path / "pinned-recovery.sqlite", recovery_authority=trusted)
+    ledger.record_system_event("TOOL_CALL", "analyst", {"tool": "search_controls"})
+    ledger.system_head_path.write_text('{"event_hash":"bad","signature":"bad"}', encoding="utf-8")
+    reason = "attacker requested rewrite"
+    payload, evidence_hash = ledger.recovery_binding(reason)
+    attacker = ApprovalAuthority(b"attacker-secret", reviewer_entitlements={"attacker": ("Risk Manager", "enterprise")})
+    token = attacker.issue(
+        case_id="AUDIT-RECOVERY",
+        action_type="reconcile_audit_anchors",
+        payload=payload,
+        workflow_version="audit-protocol-v1",
+        reviewer_id="attacker",
+        reviewer_role="Risk Manager",
+        reviewer_scope="enterprise",
+        decision=ReviewDecision.APPROVE,
+        policy_version="audit-recovery-v1",
+        evidence_hash=evidence_hash,
+    )
+    with pytest.raises(InvalidApproval):
+        ledger.reconcile_external_anchors(
+            authorization_token=token,
+            actor_id="attacker",
+            reason=reason,
+        )
+
+
+def test_audit_trust_store_preflight_uses_configured_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    trust = tmp_path / "separate-trust"
+    monkeypatch.setenv("CONTROLFLOW_AUDIT_TRUST_DIR", str(trust))
+    assert ActionLedger.probe_trust_store() == trust
+    assert trust.is_dir()
+    assert not (trust / ".preflight-probe").exists()
 
 
 def test_concurrent_system_events_preserve_external_anchor_order(tmp_path: Path) -> None:
