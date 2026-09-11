@@ -5,12 +5,28 @@ import hmac
 import json
 import secrets
 import sqlite3
+import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
+from functools import wraps
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar, cast
+
+from filelock import FileLock
 
 from controlflow.core.state import atomic_write_json, canonical_json, utc_now
 from controlflow.schemas import HumanDecision, ReviewDecision
+
+F = TypeVar("F", bound=Callable[..., Any])
+
+
+def ledger_locked(function: F) -> F:
+    @wraps(function)
+    def synchronized(self: ActionLedger, *args: Any, **kwargs: Any) -> Any:
+        with self.protocol_lock:
+            return function(self, *args, **kwargs)
+
+    return cast(F, synchronized)
 
 
 def action_key(case_id: str, action_type: str, payload: dict[str, Any], workflow_version: str) -> str:
@@ -38,14 +54,20 @@ class ActionLedger:
         path.parent.mkdir(parents=True, exist_ok=True)
         self.path = path
         # Trust material is deliberately outside the mutable ledger directory.
-        trust = Path.cwd() / "state" / "audit_trust"
+        trust = Path(
+            __import__("os").environ.get(
+                "CONTROLFLOW_AUDIT_TRUST_DIR", str(Path(tempfile.gettempdir()) / "controlflow-g-audit-trust")
+            )
+        )
         trust.mkdir(parents=True, exist_ok=True)
+        self.protocol_lock = FileLock(str(path) + ".audit-protocol.lock")
         self.key_path = trust / "root.key"
         ledger_name = hashlib.sha256(str(path.resolve()).encode()).hexdigest()
         self.head_path = trust / f"{ledger_name}.head.json"
         self.system_head_path = trust / f"{ledger_name}.system.head.json"
-        if not self.key_path.exists():
-            self.key_path.write_bytes(secrets.token_bytes(32))
+        with self.protocol_lock:
+            if not self.key_path.exists():
+                self.key_path.write_bytes(secrets.token_bytes(32))
         with self._connect() as connection:
             connection.execute(
                 """
@@ -130,7 +152,12 @@ class ActionLedger:
             "VALUES (?,?,?,?,?,?,?,?)",
             (action_id, event_type, actor_id, event_at, state_hash, payload_hash, previous_hash, event_hash),
         )
-        self._write_anchor(event_hash)
+
+    def _sync_action_anchor(self) -> None:
+        with self._connect() as connection:
+            row = connection.execute("SELECT event_hash FROM action_events ORDER BY event_id DESC LIMIT 1").fetchone()
+        if row is not None:
+            self._write_anchor(str(row[0]))
 
     @staticmethod
     def _action_state_hash(connection: sqlite3.Connection, action_id: int) -> str:
@@ -199,9 +226,11 @@ class ActionLedger:
         expected = hmac.new(self.key_path.read_bytes(), previous.encode(), hashlib.sha256).hexdigest()
         return anchor.get("event_hash") == previous and hmac.compare_digest(anchor.get("signature", ""), expected)
 
+    @ledger_locked
     def record_system_event(self, event_type: str, actor_id: str, detail: dict[str, Any]) -> None:
         """Persist a separately chained tool/authorization event."""
         detail_json = canonical_json(detail).decode()
+        self._require_integrity()
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             previous_row = connection.execute(
@@ -224,6 +253,26 @@ class ActionLedger:
             )
             connection.execute("COMMIT")
         self._write_system_anchor(event_hash)
+
+    @ledger_locked
+    def reconcile_external_anchors(self) -> None:
+        """Explicit recovery step after a diagnosed crash; never called by action execution."""
+        self._sync_action_anchor()
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT event_hash FROM system_audit_events ORDER BY event_id DESC LIMIT 1"
+            ).fetchone()
+        if row is not None:
+            self._write_system_anchor(str(row[0]))
+
+    def _require_integrity(self) -> None:
+        with self._connect() as connection:
+            has_actions = connection.execute("SELECT 1 FROM action_events LIMIT 1").fetchone() is not None
+            has_system = connection.execute("SELECT 1 FROM system_audit_events LIMIT 1").fetchone() is not None
+        if has_actions and not self.verify_event_chain():
+            raise RuntimeError("action audit chain failed closed")
+        if has_system and not self.verify_system_event_chain():
+            raise RuntimeError("system audit chain failed closed")
 
     def verify_system_event_chain(self) -> bool:
         with self._connect() as connection:
@@ -259,6 +308,7 @@ class ActionLedger:
             ).fetchone()
         return int(row[0])
 
+    @ledger_locked
     def rollback(
         self,
         action_id: int,
@@ -270,6 +320,7 @@ class ActionLedger:
         policy_version: str,
         evidence_hash: str,
     ) -> ActionReceipt:
+        self._require_integrity()
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
@@ -304,8 +355,10 @@ class ActionLedger:
                 payload_hash=rollback_id,
             )
             connection.execute("COMMIT")
+        self._sync_action_anchor()
         return ActionReceipt(action_id, str(row[0]), "ROLLED_BACK", executed=False)
 
+    @ledger_locked
     def execute_simulated(
         self,
         *,
@@ -318,6 +371,7 @@ class ActionLedger:
         policy_version: str = "local-policy-v1",
         evidence_hash: str = "none",
     ) -> ActionReceipt:
+        self._require_integrity()
         key = action_key(case_id, action_type, payload, workflow_version)
         normalized = canonical_json(payload).decode()
         now = utc_now()
@@ -357,6 +411,7 @@ class ActionLedger:
                         payload_hash=result_hash,
                     )
                     connection.execute("COMMIT")
+                    self._sync_action_anchor()
                     return ActionReceipt(row[0], key, "EXECUTED", executed=True)
                 connection.execute("COMMIT")
                 return ActionReceipt(row[0], key, row[1], executed=False)
@@ -386,11 +441,14 @@ class ActionLedger:
                 connection, action_id=action_id, event_type="EXECUTED", actor_id=reviewer_id, payload_hash=result_hash
             )
             connection.execute("COMMIT")
+        self._sync_action_anchor()
         return ActionReceipt(action_id, key, "EXECUTED", executed=True)
 
+    @ledger_locked
     def request_review(
         self, *, case_id: str, action_type: str, payload: dict[str, Any], workflow_version: str
     ) -> ActionReceipt:
+        self._require_integrity()
         key = action_key(case_id, action_type, payload, workflow_version)
         normalized = canonical_json(payload).decode()
         now = utc_now()
@@ -413,8 +471,10 @@ class ActionLedger:
                 connection, action_id=action_id, event_type="REVIEW_REQUESTED", actor_id="workflow", payload_hash=key
             )
             connection.execute("COMMIT")
+        self._sync_action_anchor()
         return ActionReceipt(action_id, key, "PENDING_REVIEW", executed=False)
 
+    @ledger_locked
     def record_review(
         self,
         action_id: int,
@@ -425,6 +485,7 @@ class ActionLedger:
         policy_version: str,
         evidence_hash: str,
     ) -> ActionReceipt:
+        self._require_integrity()
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
@@ -486,4 +547,5 @@ class ActionLedger:
                 payload_hash=hashlib.sha256(canonical_json(decision.model_dump(mode="json"))).hexdigest(),
             )
             connection.execute("COMMIT")
+        self._sync_action_anchor()
         return ActionReceipt(action_id, resulting_key, next_status, executed=False)

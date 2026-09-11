@@ -15,10 +15,11 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from sklearn.ensemble import IsolationForest
 from sklearn.pipeline import Pipeline
 
-from controlflow.audit.ledger import ActionLedger
+from controlflow.audit.ledger import ActionLedger, action_key
+from controlflow.authorization.identity import SessionIdentityProvider
 from controlflow.authorization.policy import LocalPolicyBackend, ToolPolicyInput
 from controlflow.core.state import ProjectPaths, atomic_write_json, canonical_json, sha256_file
-from controlflow.hitl.approval import ApprovalAuthority
+from controlflow.hitl.approval import ApprovalAuthority, InvalidApproval
 from controlflow.modeling.supervised import LABELS, _preprocessor, _xy
 from controlflow.retrieval.core import (
     BM25Retriever,
@@ -187,6 +188,7 @@ class GovernedWorkflow:
         state_dir: Path | None = None,
         regulations: pd.DataFrame | None = None,
         require_cuda_retrieval: bool = False,
+        identity_provider: SessionIdentityProvider | None = None,
     ) -> None:
         self.risk = risk_service or RiskService(training)
         self.controls = controls
@@ -196,11 +198,14 @@ class GovernedWorkflow:
         self.state_dir = state_dir
         self.require_cuda_retrieval = require_cuda_retrieval
         self.training = training.set_index("case_id", drop=False)
+        business_units = set(training["business_unit"].astype(str))
+        self.identity_provider = identity_provider or SessionIdentityProvider.for_business_units(business_units)
         paths = ProjectPaths.discover()
         artifact_manifest = json.loads((paths.state / "artifact_manifest.json").read_text(encoding="utf-8"))
         recorded_hashes = {item["path"]: item["sha256"] for item in artifact_manifest["artifacts"]}
         control_path = paths.root / "data/staging/nist_controls_raw.parquet"
         regulation_path = paths.root / "data/staging/cfr_raw.parquet"
+        transaction_path = paths.root / "data/staging/transactions_raw.parquet"
         controls_trusted = recorded_hashes.get("data/staging/nist_controls_raw.parquet") == sha256_file(
             control_path
         ) and controls.reset_index(drop=True).equals(pd.read_parquet(control_path).reset_index(drop=True))
@@ -209,7 +214,11 @@ class GovernedWorkflow:
             and recorded_hashes.get("data/staging/cfr_raw.parquet") == sha256_file(regulation_path)
             and regulations.reset_index(drop=True).equals(pd.read_parquet(regulation_path).reset_index(drop=True))
         )
+        self.transactions = pd.read_parquet(transaction_path)
+        if recorded_hashes.get("data/staging/transactions_raw.parquet") != sha256_file(transaction_path):
+            raise ValueError("transaction query source failed artifact verification")
         self._retriever_cache: dict[tuple[str, int, int, bool, bool], BM25Retriever | NeuralHybridRetriever] = {}
+        self._context_observations: dict[tuple[str, str], dict[str, object]] = {}
         origin = datetime(2020, 1, 1, tzinfo=UTC)
         self.evidence_corpus: list[TemporalEvidence] = []
         for control in controls.itertuples():
@@ -251,17 +260,11 @@ class GovernedWorkflow:
                     )
                 )
 
-    @staticmethod
-    def identity(row: pd.Series) -> IdentityContext:
-        return IdentityContext(
-            user_id="analyst-1",
-            role="Control Analyst",
-            business_unit=str(row.business_unit),
-            region="US",
-            clearance=2,
-            purpose="control exception investigation",
-            session_id="validation-session",
-        )
+    def session_token_for_scope(self, business_unit: str) -> str:
+        return self.identity_provider.token_for_scope(business_unit)
+
+    def identity(self, session_token: str) -> IdentityContext:
+        return self.identity_provider.resolve(session_token)
 
     def _evidence(
         self, row: pd.Series, config: WorkflowConfig, identity: IdentityContext
@@ -317,9 +320,9 @@ class GovernedWorkflow:
         )
         return selected, temporal
 
-    def context_for_llm(self, row: pd.Series, config: WorkflowConfig) -> str:
+    def context_for_llm(self, row: pd.Series, config: WorkflowConfig, *, session_token: str) -> str:
         """Build LLM-visible context exclusively from authorized typed-tool outputs."""
-        identity = self.identity(row)
+        identity = self.identity(session_token)
         registry = ToolRegistry(self.policy, self.ledger.record_system_event)
         retrieved_by_tool: dict[str, TemporalEvidence] = {}
         feature_row = row.copy()
@@ -348,6 +351,61 @@ class GovernedWorkflow:
             _, score = self.risk.predict_details(feature_row, calibrated=config.calibration)
             return AnomalyToolOutput(
                 score=score, threshold=self.risk.anomaly_threshold, is_anomaly=score > self.risk.anomaly_threshold
+            )
+
+        def search_cases(_request: CaseLookupInput) -> StructuredResult:
+            query_terms = set(re.findall(r"[a-z0-9]+", str(row.narrative).casefold()))
+            candidates = self.training.loc[
+                self.training["business_unit"].eq(identity.business_unit)
+                & ~self.training["case_id"].eq(str(row.case_id))
+            ].copy()
+            candidates["similarity"] = candidates["narrative"].map(
+                lambda value: len(query_terms & set(re.findall(r"[a-z0-9]+", str(value).casefold())))
+            )
+            identifiers = candidates.sort_values(["similarity", "event_timestamp"], ascending=False).head(5)["case_id"]
+            return StructuredResult(values={"matching_case_ids": identifiers.astype(str).tolist()})
+
+        def policy_at_time(_request: CaseLookupInput) -> EvidenceSearchOutput:
+            event_time = pd.Timestamp(row.event_timestamp).to_pydatetime()
+            return EvidenceSearchOutput(
+                evidence_ids=[
+                    item.evidence_id
+                    for item in retrieved_by_tool.values()
+                    if item.source != "NIST SP 800-53" and item.valid_at(event_time, event_time)
+                ]
+            )
+
+        def query_case(_request: CaseLookupInput) -> StructuredResult:
+            return StructuredResult(
+                values={
+                    "case_id": str(row.case_id),
+                    "entity_id": str(row.entity_id),
+                    "business_unit": str(row.business_unit),
+                    "event_timestamp": str(row.event_timestamp),
+                    "repeat_count": int(row.repeat_count),
+                }
+            )
+
+        def query_transactions(_request: CaseLookupInput) -> StructuredResult:
+            as_of = self.transactions.loc[
+                self.transactions["entity_id"].eq(str(row.entity_id))
+                & (self.transactions["event_timestamp"] <= pd.Timestamp(row.event_timestamp))
+            ].sort_values("event_timestamp")
+            recent = as_of.tail(20)
+            return StructuredResult(
+                values={
+                    "transaction_ids": recent["transaction_id"].astype(str).tolist(),
+                    "transaction_count": len(as_of),
+                    "amount_sum": float(as_of["amount"].sum()),
+                    "amount_max": float(as_of["amount"].max()) if len(as_of) else 0.0,
+                }
+            )
+
+        def evidence_bundle(_request: CaseLookupInput) -> EvidenceBundleOutput:
+            identifiers = sorted(retrieved_by_tool)
+            return EvidenceBundleOutput(
+                evidence_ids=identifiers,
+                bundle_sha256=hashlib.sha256(canonical_json(identifiers)).hexdigest(),
             )
 
         specs = (
@@ -403,6 +461,71 @@ class GovernedWorkflow:
                 1,
                 anomaly_tool,
             ),
+            ToolSpec(
+                "search_cases",
+                CaseLookupInput,
+                StructuredResult,
+                0,
+                True,
+                frozenset({"Control Analyst"}),
+                frozenset({identity.business_unit}),
+                False,
+                2.0,
+                1,
+                search_cases,
+            ),
+            ToolSpec(
+                "get_policy_at_time",
+                CaseLookupInput,
+                EvidenceSearchOutput,
+                0,
+                True,
+                frozenset({"Control Analyst"}),
+                frozenset({identity.business_unit}),
+                False,
+                2.0,
+                1,
+                policy_at_time,
+            ),
+            ToolSpec(
+                "query_case_data",
+                CaseLookupInput,
+                StructuredResult,
+                0,
+                True,
+                frozenset({"Control Analyst"}),
+                frozenset({identity.business_unit}),
+                False,
+                2.0,
+                1,
+                query_case,
+            ),
+            ToolSpec(
+                "query_transactions",
+                CaseLookupInput,
+                StructuredResult,
+                0,
+                True,
+                frozenset({"Control Analyst"}),
+                frozenset({identity.business_unit}),
+                False,
+                2.0,
+                1,
+                query_transactions,
+            ),
+            ToolSpec(
+                "generate_evidence_bundle",
+                CaseLookupInput,
+                EvidenceBundleOutput,
+                0,
+                True,
+                frozenset({"Control Analyst"}),
+                frozenset({identity.business_unit}),
+                False,
+                2.0,
+                1,
+                evidence_bundle,
+            ),
         )
         for spec in specs:
             registry.register(spec)
@@ -423,14 +546,28 @@ class GovernedWorkflow:
         anomaly_result = (
             invoke("compute_anomaly", {"case_id": str(row.case_id)}) if config.ml_risk and config.anomaly else None
         )
+        cases_result = invoke("search_cases", {"case_id": str(row.case_id)})
+        policy_result = invoke("get_policy_at_time", {"case_id": str(row.case_id)})
+        case_result = invoke("query_case_data", {"case_id": str(row.case_id)})
+        transaction_result = invoke("query_transactions", {"case_id": str(row.case_id)})
+        bundle_result = invoke("generate_evidence_bundle", {"case_id": str(row.case_id)})
         control_ids = control_result.evidence_ids  # type: ignore[attr-defined]
         regulation_ids = regulation_result.evidence_ids  # type: ignore[attr-defined]
+        structured_context: dict[str, object] = {
+            "search_cases": cases_result.model_dump(mode="json"),
+            "get_policy_at_time": policy_result.model_dump(mode="json"),
+            "query_case_data": case_result.model_dump(mode="json"),
+            "query_transactions": transaction_result.model_dump(mode="json"),
+            "generate_evidence_bundle": bundle_result.model_dump(mode="json"),
+        }
+        self._context_observations[(str(row.case_id), session_token)] = structured_context
         return json.dumps(
             {
                 "search_controls": [retrieved_by_tool[item].text[:300] for item in control_ids],
                 "search_regulations": [retrieved_by_tool[item].text[:300] for item in regulation_ids],
                 "compute_risk": risk_result.model_dump(mode="json") if risk_result else {},
                 "compute_anomaly": anomaly_result.model_dump(mode="json") if anomaly_result else {},
+                **structured_context,
                 "propose_case_update": "write action requires the workflow authorization boundary",
             },
             sort_keys=True,
@@ -443,15 +580,18 @@ class GovernedWorkflow:
         llm_prediction: tuple[str, str, bool],
         llm_tool_requests: list[str] | None = None,
         llm_tool_arguments: list[dict[str, object]] | None = None,
+        *,
+        session_token: str,
     ) -> WorkflowTrace:
         started = time.perf_counter()
-        identity = self.identity(row)
+        identity = self.identity(session_token)
         tool_calls: list[str] = []
         requested = set(llm_tool_requests) if llm_tool_requests is not None else None
         requested_arguments = {
             name: arguments for name, arguments in zip(llm_tool_requests or [], llm_tool_arguments or [], strict=False)
         }
         tool_argument_errors = 0
+        structured_tool_results = dict(self._context_observations.get((str(row.case_id), session_token), {}))
         risk_requested = requested is None or bool(requested & {"compute_risk", "compute_anomaly"})
         retrieval_requested = requested is None or bool(
             requested
@@ -622,12 +762,19 @@ class GovernedWorkflow:
                     StructuredResult,
                     lambda _: StructuredResult(
                         values={
-                            "matching_case_ids": self.training.loc[
-                                self.training["business_unit"].eq(identity.business_unit)
-                            ]
+                            "matching_case_ids": self.training.assign(
+                                similarity=self.training["narrative"].map(
+                                    lambda value: len(
+                                        set(re.findall(r"[a-z0-9]+", str(row.narrative).casefold()))
+                                        & set(re.findall(r"[a-z0-9]+", str(value).casefold()))
+                                    )
+                                )
+                            )
+                            .loc[lambda frame: frame["business_unit"].eq(identity.business_unit)]
+                            .sort_values(["similarity", "event_timestamp"], ascending=False)
                             .head(5)["case_id"]
                             .astype(str)
-                            .tolist()
+                            .tolist(),
                         }
                     ),
                 ),
@@ -656,7 +803,24 @@ class GovernedWorkflow:
                 (
                     "query_transactions",
                     StructuredResult,
-                    lambda _: StructuredResult(values={"case_id": str(row.case_id), "amount": float(row.amount)}),
+                    lambda _: StructuredResult(
+                        values={
+                            "transaction_ids": self.transactions.loc[
+                                self.transactions["entity_id"].eq(str(row.entity_id))
+                                & (self.transactions["event_timestamp"] <= pd.Timestamp(row.event_timestamp))
+                            ]
+                            .sort_values("event_timestamp")
+                            .tail(20)["transaction_id"]
+                            .astype(str)
+                            .tolist(),
+                            "transaction_count": int(
+                                (
+                                    self.transactions["entity_id"].eq(str(row.entity_id))
+                                    & (self.transactions["event_timestamp"] <= pd.Timestamp(row.event_timestamp))
+                                ).sum()
+                            ),
+                        }
+                    ),
                 ),
                 (
                     "generate_evidence_bundle",
@@ -687,7 +851,7 @@ class GovernedWorkflow:
                 )
                 if requested is None or tool_name in requested:
                     try:
-                        registry.invoke(
+                        auxiliary_result = registry.invoke(
                             tool_name,
                             requested_arguments.get(tool_name, {"case_id": str(row.case_id)}),
                             identity=identity,
@@ -695,6 +859,7 @@ class GovernedWorkflow:
                             data_classification=int(row.get("data_sensitivity", 0)),
                             severity=Severity(severity),
                         )
+                        structured_tool_results[tool_name] = auxiliary_result.model_dump(mode="json")
                         tool_calls.append(tool_name)
                     except (ValidationError, PermissionError):
                         tool_argument_errors += 1
@@ -705,7 +870,7 @@ class GovernedWorkflow:
             system_time=pd.Timestamp(row.event_timestamp).to_pydatetime(),
             identity_context=identity,
             purpose=identity.purpose,
-            case_context={"business_unit": row.business_unit},
+            case_context={"business_unit": row.business_unit, "tool_results": structured_tool_results},
             retrieved_evidence=evidence,
         )
         required_ids = []
@@ -731,10 +896,25 @@ class GovernedWorkflow:
         boundary_violation = False
         requested_sql = row.get("requested_sql")
         if isinstance(requested_sql, str) and requested_sql:
+            sql_started = time.perf_counter()
+            sql_status = "allowed"
             try:
                 validate_readonly_sql(requested_sql, frozenset({"gold.fact_case"}))
             except UnsafeQuery:
                 boundary_violation = True
+                sql_status = "rejected"
+            self.ledger.record_system_event(
+                "SQL_VALIDATION",
+                identity.user_id,
+                {
+                    "query_sha256": hashlib.sha256(requested_sql.encode()).hexdigest(),
+                    "status": sql_status,
+                    "allowed_tables": ["gold.fact_case"],
+                    "row_limit": 10_000,
+                    "policy_version": self.policy.version,
+                    "duration_seconds": time.perf_counter() - sql_started,
+                },
+            )
         tool_description = row.get("requested_tool_description")
         if isinstance(tool_description, str) and tool_description:
             probe = ToolRegistry(self.policy, self.ledger.record_system_event)
@@ -762,9 +942,20 @@ class GovernedWorkflow:
             boundary_violation = True
         presented_approval = row.get("presented_approval_token")
         if isinstance(presented_approval, str) and presented_approval:
-            # Unsolicited approval material is never accepted during analysis;
-            # the side-effect boundary issues or verifies its own bound token.
-            boundary_violation = True
+            try:
+                self.authority.verify(
+                    presented_approval,
+                    expected_action_key=action_key(
+                        str(row.case_id),
+                        "propose_case_update",
+                        {"status": "investigated"},
+                        "agent-graph-v3",
+                    ),
+                    policy_version="local-policy-v1",
+                    evidence_hash="analysis-context",
+                )
+            except InvalidApproval:
+                boundary_violation = True
         injection_detected = (
             boundary_violation
             or bool(INJECTION.search(str(row.narrative)))
@@ -773,6 +964,13 @@ class GovernedWorkflow:
         requested_scope = (
             "restricted" if injection_detected else str(row.get("requested_scope", identity.business_unit))
         )
+        requested_action_arguments = row.get("requested_action_arguments", {"case_id": str(row.case_id)})
+        if not isinstance(requested_action_arguments, dict):
+            requested_action_arguments = {"invalid": True}
+            boundary_violation = True
+        if requested_action_arguments.get("case_id", str(row.case_id)) != str(row.case_id):
+            boundary_violation = True
+            requested_scope = "restricted"
         request = ToolPolicyInput(
             tool_name="propose_case_update",
             risk_tier=2 if severity in {"HIGH", "CRITICAL"} else 1,
@@ -783,7 +981,7 @@ class GovernedWorkflow:
             data_classification=int(row.get("data_sensitivity", 0)),
             requested_scope=requested_scope,
             case_severity=Severity(severity),
-            arguments={"case_id": str(row.case_id)},
+            arguments=requested_action_arguments,
         )
         authorization = self.policy.authorize(identity, request) if config.authorization else None
         authorization_outcome = authorization.outcome.value if authorization else "ALLOW"

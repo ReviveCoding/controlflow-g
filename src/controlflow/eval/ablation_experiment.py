@@ -54,7 +54,7 @@ def run() -> str:
             workflow = GovernedWorkflow(
                 train,
                 controls,
-                ActionLedger(paths.root / f"artifacts/ablation_{name}_action_ledger_v4.sqlite"),
+                ActionLedger(paths.root / f"artifacts/ablation_{name}_action_ledger_v5.sqlite"),
                 ApprovalAuthority(secrets.token_bytes(32)),
                 risk_service=risk_service,
                 state_dir=paths.root / f"artifacts/ablation_graph_state_v4/{name}",
@@ -64,7 +64,8 @@ def run() -> str:
             workflow._retriever_cache = shared_retriever_cache  # type: ignore[assignment]
             current = []
             for _, row in cases.iterrows():
-                context = workflow.context_for_llm(row, config)
+                session_token = workflow.session_token_for_scope(str(row.business_unit))
+                context = workflow.context_for_llm(row, config, session_token=session_token)
                 cache_key = (str(row.case_id), context)
                 if cache_key not in prediction_cache:
                     prediction_cache[cache_key] = _predict_one(str(row.narrative), context)
@@ -72,7 +73,7 @@ def run() -> str:
                 observed = evaluate_trace(
                     name,
                     row,
-                    workflow.execute(row, config, prediction[:3]),
+                    workflow.execute(row, config, prediction[:3], session_token=session_token),
                     prediction[3],
                 )
                 observed["experiment_id"] = f"ablation-{name}"

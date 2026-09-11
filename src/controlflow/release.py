@@ -59,6 +59,7 @@ def create_freeze() -> str:
         Path("data/sealed/locked_final_test.metadata.json"),
         Path("data/staging/nist_controls_raw.parquet"),
         Path("data/staging/cfr_raw.parquet"),
+        Path("data/staging/transactions_raw.parquet"),
         Path("results/agents.parquet"),
         Path("results/security.parquet"),
         Path("artifacts/frozen_risk_service.joblib"),

@@ -353,7 +353,7 @@ def run_agents(only: frozenset[str] | None = None) -> str:
         name: GovernedWorkflow(
             train,
             controls,
-            ActionLedger(paths.root / f"artifacts/agent_{name}_action_ledger_protocol2.sqlite"),
+            ActionLedger(paths.root / f"artifacts/agent_{name}_action_ledger_protocol5.sqlite"),
             ApprovalAuthority(secrets.token_bytes(32)),
             risk_service=risk_service,
             state_dir=paths.root / f"artifacts/graph_state_v3/{name}",
@@ -375,8 +375,14 @@ def run_agents(only: frozenset[str] | None = None) -> str:
     if only is None or name in only:
         for _, row in cases.iterrows():
             prediction = _rule_prediction(row)
+            session_token = workflow.session_token_for_scope(str(row.business_unit))
             traces.append(
-                evaluate_trace(name, row, workflow.execute(row, CONFIGS[name], prediction[:3]), prediction[3])
+                evaluate_trace(
+                    name,
+                    row,
+                    workflow.execute(row, CONFIGS[name], prediction[:3], session_token=session_token),
+                    prediction[3],
+                )
             )
     with GpuSemaphore():
         with PhaseRun("P16", paths) as phase:
@@ -386,6 +392,7 @@ def run_agents(only: frozenset[str] | None = None) -> str:
                 config = CONFIGS[name]
                 workflow = workflows[name]
                 for _, row in cases.iterrows():
+                    session_token = workflow.session_token_for_scope(str(row.business_unit))
                     mode = (
                         "react"
                         if name == "AG3_unrestricted_react"
@@ -401,7 +408,7 @@ def run_agents(only: frozenset[str] | None = None) -> str:
                     )
                     prediction = _predict_one(
                         str(row.narrative),
-                        workflow.context_for_llm(row, config),
+                        workflow.context_for_llm(row, config, session_token=session_token),
                         mode,
                         _tool_capabilities(config) if mode in {"react", "planner"} else None,
                     )
@@ -420,7 +427,14 @@ def run_agents(only: frozenset[str] | None = None) -> str:
                         evaluate_trace(
                             name,
                             row,
-                            workflow.execute(row, config, prediction[:3], tool_requests, tool_arguments),
+                            workflow.execute(
+                                row,
+                                config,
+                                prediction[:3],
+                                tool_requests,
+                                tool_arguments,
+                                session_token=session_token,
+                            ),
                             prediction[3],
                         )
                     )
@@ -431,10 +445,16 @@ def run_agents(only: frozenset[str] | None = None) -> str:
             workflow = workflows["AG6_controlflow_g"]
             if only is None or "AG6_controlflow_g" in only:
                 for _, row in cases.iterrows():
-                    prediction = _predict_one(str(row.narrative), workflow.context_for_llm(row, config))
+                    session_token = workflow.session_token_for_scope(str(row.business_unit))
+                    prediction = _predict_one(
+                        str(row.narrative), workflow.context_for_llm(row, config, session_token=session_token)
+                    )
                     traces.append(
                         evaluate_trace(
-                            "AG6_controlflow_g", row, workflow.execute(row, config, prediction[:3]), prediction[3]
+                            "AG6_controlflow_g",
+                            row,
+                            workflow.execute(row, config, prediction[:3], session_token=session_token),
+                            prediction[3],
                         )
                     )
             trace_frame = pd.DataFrame(traces)

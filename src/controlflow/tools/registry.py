@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import re
+import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from dataclasses import dataclass
@@ -9,6 +11,7 @@ from typing import Any, Generic, TypeVar, cast
 from pydantic import BaseModel
 
 from controlflow.authorization.policy import LocalPolicyBackend, ToolPolicyInput
+from controlflow.core.state import canonical_json
 from controlflow.schemas import AuthorizationOutcome, IdentityContext, Severity
 
 InputT = TypeVar("InputT", bound=BaseModel)
@@ -66,15 +69,25 @@ class ToolRegistry:
         data_classification: int,
         severity: Severity,
     ) -> BaseModel:
+        started = time.perf_counter()
+        base_event = {
+            "tool": name,
+            "argument_sha256": hashlib.sha256(canonical_json(raw_input)).hexdigest(),
+            "requested_scope": scope,
+            "data_classification": data_classification,
+            "severity": severity.value,
+            "policy_version": self.policy.version,
+            "tool_schema_version": 1,
+        }
         if name not in self._tools:
-            event = {"tool": name, "authorization": "DENY", "status": "unknown_tool"}
+            event = {**base_event, "authorization": "DENY", "status": "unknown_tool"}
             self._audit(identity, event)
             raise ToolDenied(f"unknown tool: {name}")
         spec = self._tools[name]
         try:
             parsed = spec.input_model.model_validate(raw_input)
         except Exception:
-            self._audit(identity, {"tool": name, "authorization": "DENY", "status": "invalid_arguments"})
+            self._audit(identity, {**base_event, "authorization": "DENY", "status": "invalid_arguments"})
             raise
         authorization = self.policy.authorize(
             identity,
@@ -92,10 +105,26 @@ class ToolRegistry:
             ),
         )
         if authorization.outcome is AuthorizationOutcome.DENY:
-            self._audit(identity, {"tool": name, "authorization": "DENY", "status": "denied"})
+            self._audit(
+                identity,
+                {
+                    **base_event,
+                    "authorization": "DENY",
+                    "authorization_reasons": list(authorization.reasons),
+                    "status": "denied",
+                },
+            )
             raise ToolDenied(",".join(authorization.reasons))
         if authorization.outcome is AuthorizationOutcome.REQUIRE_REVIEW:
-            self._audit(identity, {"tool": name, "authorization": "REQUIRE_REVIEW", "status": "denied"})
+            self._audit(
+                identity,
+                {
+                    **base_event,
+                    "authorization": "REQUIRE_REVIEW",
+                    "authorization_reasons": list(authorization.reasons),
+                    "status": "denied",
+                },
+            )
             raise ToolDenied("human_review_required")
         last_error: Exception | None = None
         attempts = 1 if not spec.read_only else spec.max_retries + 1
@@ -107,10 +136,13 @@ class ToolRegistry:
                 self._audit(
                     identity,
                     {
-                        "tool": name,
+                        **base_event,
                         "attempt": attempt + 1,
                         "authorization": authorization.outcome.value,
+                        "authorization_reasons": list(authorization.reasons),
                         "status": "success",
+                        "output_sha256": hashlib.sha256(canonical_json(output.model_dump(mode="json"))).hexdigest(),
+                        "duration_seconds": time.perf_counter() - started,
                     },
                 )
                 executor.shutdown(wait=True, cancel_futures=True)
@@ -121,10 +153,11 @@ class ToolRegistry:
                 self._audit(
                     identity,
                     {
-                        "tool": name,
+                        **base_event,
                         "attempt": attempt + 1,
                         "authorization": authorization.outcome.value,
                         "status": "timeout",
+                        "duration_seconds": time.perf_counter() - started,
                     },
                 )
             except Exception as exc:
@@ -132,11 +165,12 @@ class ToolRegistry:
                 self._audit(
                     identity,
                     {
-                        "tool": name,
+                        **base_event,
                         "attempt": attempt + 1,
                         "authorization": authorization.outcome.value,
                         "status": "error",
                         "error_type": type(exc).__name__,
+                        "duration_seconds": time.perf_counter() - started,
                     },
                 )
             finally:

@@ -156,6 +156,23 @@ def test_durable_system_audit_chain_detects_tampering(tmp_path: Path) -> None:
     assert not ledger.verify_system_event_chain()
 
 
+def test_corrupt_external_anchor_fails_closed_until_explicit_reconciliation(tmp_path: Path) -> None:
+    ledger = ActionLedger(tmp_path / "fail-closed.sqlite")
+    ledger.record_system_event("TOOL_CALL", "analyst", {"tool": "search_controls"})
+    ledger.system_head_path.write_text('{"event_hash":"bad","signature":"bad"}', encoding="utf-8")
+    with pytest.raises(RuntimeError, match="audit chain failed closed"):
+        ledger.record_system_event("TOOL_CALL", "analyst", {"tool": "search_cases"})
+    ledger.reconcile_external_anchors()
+    assert ledger.verify_system_event_chain()
+
+
+def test_concurrent_system_events_preserve_external_anchor_order(tmp_path: Path) -> None:
+    ledger = ActionLedger(tmp_path / "concurrent-audit.sqlite")
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(lambda index: ledger.record_system_event("TOOL_CALL", "analyst", {"index": index}), range(32)))
+    assert ledger.verify_system_event_chain()
+
+
 def test_unprovisioned_reviewer_cannot_self_assert_entitlement() -> None:
     authority = ApprovalAuthority(b"test-secret")
     with pytest.raises(InvalidApproval, match="not provisioned"):

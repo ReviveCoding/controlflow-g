@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 from pydantic import BaseModel
@@ -16,6 +18,14 @@ from controlflow.tools.registry import ToolRegistry, ToolSpec
 
 class Probe(BaseModel):
     value: int
+
+
+class FakeRisk:
+    anomaly_threshold = 1.0
+    review_threshold = 0.8
+
+    def predict_details(self, _row: pd.Series, *, calibrated: bool = True) -> tuple[np.ndarray, float]:
+        return np.asarray([0.7, 0.2, 0.09, 0.01]), 0.1
 
 
 def test_exact_identifier_is_not_oracle_injected_after_retrieval_miss(
@@ -41,7 +51,7 @@ def test_exact_identifier_is_not_oracle_injected_after_retrieval_miss(
         controls,
         ActionLedger(tmp_path / "miss.sqlite"),
         ApprovalAuthority(b"secret"),
-        risk_service=object(),  # type: ignore[arg-type]
+        risk_service=FakeRisk(),  # type: ignore[arg-type]
     )
     row = pd.Series(
         {
@@ -54,8 +64,75 @@ def test_exact_identifier_is_not_oracle_injected_after_retrieval_miss(
         }
     )
     monkeypatch.setattr("controlflow.retrieval.core.BM25Retriever.search", lambda *_: [])
-    evidence, _ = workflow._evidence(row, WorkflowConfig(reranker=False), workflow.identity(row))
+    token = workflow.session_token_for_scope("consumer")
+    evidence, _ = workflow._evidence(row, WorkflowConfig(reranker=False), workflow.identity(token))
     assert "AC-2" not in {item.evidence_id for item in evidence}
+
+
+def test_authenticated_identity_is_immutable_when_case_scope_is_tampered(tmp_path: Path) -> None:
+    controls = pd.read_parquet("data/staging/nist_controls_raw.parquet").head(1)
+    training = pd.DataFrame(
+        [
+            {
+                "case_id": "train",
+                "entity_id": "ENTITY-00001",
+                "business_unit": "consumer",
+                "event_timestamp": pd.Timestamp("2024-01-01", tz="UTC"),
+                "narrative": "historic payment exception",
+            }
+        ]
+    )
+    workflow = GovernedWorkflow(
+        training,
+        controls,
+        ActionLedger(tmp_path / "identity.sqlite"),
+        ApprovalAuthority(b"secret"),
+        risk_service=FakeRisk(),  # type: ignore[arg-type]
+    )
+    token = workflow.session_token_for_scope("consumer")
+    tampered = training.iloc[0].copy()
+    tampered["business_unit"] = "wealth"
+    assert workflow.identity(token).business_unit == "consumer"
+    assert workflow.identity(token).session_id == token
+
+
+def test_all_read_tool_outputs_enter_llm_context(tmp_path: Path) -> None:
+    controls = pd.read_parquet("data/staging/nist_controls_raw.parquet").head(2)
+    training = pd.DataFrame(
+        [
+            {
+                "case_id": "train",
+                "entity_id": "ENTITY-00001",
+                "business_unit": "consumer",
+                "event_timestamp": pd.Timestamp("2024-01-01", tz="UTC"),
+                "narrative": "historic payment exception",
+            }
+        ]
+    )
+    workflow = GovernedWorkflow(
+        training,
+        controls,
+        ActionLedger(tmp_path / "context.sqlite"),
+        ApprovalAuthority(b"secret"),
+        risk_service=FakeRisk(),  # type: ignore[arg-type]
+    )
+    row = training.iloc[0].copy()
+    row["case_id"] = "current"
+    row["event_timestamp"] = pd.Timestamp("2025-01-01", tz="UTC")
+    row["pit_historical_failures"] = 0
+    row["future_failures"] = 0
+    row["repeat_count"] = 1
+    row["data_sensitivity"] = 0
+    token = workflow.session_token_for_scope("consumer")
+    context = json.loads(workflow.context_for_llm(row, WorkflowConfig(reranker=False), session_token=token))
+    assert {
+        "search_cases",
+        "get_policy_at_time",
+        "query_case_data",
+        "query_transactions",
+        "generate_evidence_bundle",
+    }.issubset(context)
+    assert context["query_case_data"]["values"]["case_id"] == "current"
 
 
 def test_denied_or_malformed_tool_never_executes_implementation() -> None:

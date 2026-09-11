@@ -52,7 +52,7 @@ def run_final_once() -> str:
         name: GovernedWorkflow(
             development,
             controls,
-            ActionLedger(paths.root / f"artifacts/final_{name}_action_ledger_v3.sqlite"),
+            ActionLedger(paths.root / f"artifacts/final_{name}_action_ledger_v5.sqlite"),
             ApprovalAuthority(secrets.token_bytes(32)),
             risk_service=frozen_risk,
             state_dir=paths.root / f"artifacts/final_graph_state_v3/{name}",
@@ -66,19 +66,21 @@ def run_final_once() -> str:
     with GpuSemaphore():
         for _, case in cases.iterrows():
             workflow = workflows["AG0_rules_templates"]
+            session_token = workflow.session_token_for_scope(str(case.business_unit))
             baseline = _rule_prediction(case)
             rows.append(
                 evaluate_trace(
                     "AG0_rules_templates_final",
                     case,
-                    workflow.execute(case, CONFIGS["AG0_rules_templates"], baseline[:3]),
+                    workflow.execute(case, CONFIGS["AG0_rules_templates"], baseline[:3], session_token=session_token),
                     baseline[3],
                 )
             )
             workflow = workflows["AG3_unrestricted_react"]
+            session_token = workflow.session_token_for_scope(str(case.business_unit))
             react = _predict_one(
                 str(case.narrative),
-                workflow.context_for_llm(case, CONFIGS["AG3_unrestricted_react"]),
+                workflow.context_for_llm(case, CONFIGS["AG3_unrestricted_react"], session_token=session_token),
                 "react",
                 _tool_capabilities(CONFIGS["AG3_unrestricted_react"]),
             )
@@ -92,17 +94,22 @@ def run_final_once() -> str:
                         react[:3],
                         react[3]["requested_tools"],
                         react[3]["requested_arguments"],
+                        session_token=session_token,
                     ),
                     react[3],
                 )
             )
             workflow = workflows["AG6_controlflow_g"]
-            prediction = _predict_one(str(case.narrative), workflow.context_for_llm(case, CONFIGS["AG6_controlflow_g"]))
+            session_token = workflow.session_token_for_scope(str(case.business_unit))
+            prediction = _predict_one(
+                str(case.narrative),
+                workflow.context_for_llm(case, CONFIGS["AG6_controlflow_g"], session_token=session_token),
+            )
             rows.append(
                 evaluate_trace(
                     "AG6_controlflow_g_final",
                     case,
-                    workflow.execute(case, CONFIGS["AG6_controlflow_g"], prediction[:3]),
+                    workflow.execute(case, CONFIGS["AG6_controlflow_g"], prediction[:3], session_token=session_token),
                     prediction[3],
                 )
             )

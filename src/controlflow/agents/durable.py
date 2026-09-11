@@ -40,7 +40,8 @@ class DurableWorkflowRunner:
         )
         if fault == "before_execute":
             raise InjectedWorkflowCrash("injected crash before workflow execution")
-        trace = self.workflow.execute(row, config, prediction)
+        token = self.workflow.session_token_for_scope(str(row.business_unit))
+        trace = self.workflow.execute(row, config, prediction, session_token=token)
         if fault == "after_execute_before_checkpoint":
             raise InjectedWorkflowCrash("injected crash after execution before checkpoint commit")
         self._complete(trace)
@@ -52,12 +53,16 @@ class DurableWorkflowRunner:
         config: WorkflowConfig,
         prediction: tuple[str, str, bool],
     ) -> WorkflowTrace:
+        # Explicit recovery reconciles a committed audit event whose external
+        # signed checkpoint could not be exported before process death.
+        self.workflow.ledger.reconcile_external_anchors()
         state: dict[str, Any] = json.loads(self.checkpoint.read_text(encoding="utf-8"))
         if state.get("case_id") != str(row.case_id):
             raise ValueError("checkpoint belongs to another case")
         if state.get("status") == "COMPLETE":
             return WorkflowTrace(**state["trace"])
-        trace = self.workflow.execute(row, config, prediction)
+        token = self.workflow.session_token_for_scope(str(row.business_unit))
+        trace = self.workflow.execute(row, config, prediction, session_token=token)
         self._complete(trace)
         return trace
 
