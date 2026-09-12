@@ -449,7 +449,9 @@ def run() -> str:
                 )
             else:
                 try:
-                    trace = workflow.execute(case, config, prediction[:3], session_token=session_token)
+                    trace = workflow.execute(
+                        case, config, prediction[:3], llm_analysis=prediction[3], session_token=session_token
+                    )
                 except PermissionError:
                     if attack != "S15":
                         raise

@@ -75,7 +75,11 @@ class FinalCheckpointTrace(BaseModel):
     llm_requested_tools: str
     llm_requested_arguments: str
     tool_argument_errors: int = Field(ge=0)
-    tool_argument_accuracy: float = Field(ge=0, le=1, allow_inf_nan=False)
+    executed_tool_steps: str
+    tool_argument_accuracy: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
+    llm_plan_argument_accuracy: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
+    llm_analysis_hash: str
+    llm_analysis_valid: bool
     correct_tool_request: bool
 
 
@@ -136,9 +140,16 @@ def run_final_once() -> str:
     phase = PhaseRun("P26", paths)
     phase.__enter__()
     os.environ["CONTROLFLOW_UNLOCK_FINAL"] = "P26"
-    final_ids = set(load_split("locked_final_test", phase="P26"))
+    final_id_list = load_split("locked_final_test", phase="P26")
+    if not final_id_list or any(not value for value in final_id_list) or len(final_id_list) != len(set(final_id_list)):
+        raise RuntimeError("locked final split identifiers are blank or duplicated")
     master = attach_synthetic_pit_features(pd.read_parquet(holdout_path))
-    cases = master[master.case_id.isin(final_ids)].sort_values("case_id")
+    master_ids = master.case_id.astype(str)
+    if master_ids.duplicated().any():
+        raise RuntimeError("locked final holdout contains duplicate case identifiers")
+    if len(master_ids) != len(final_id_list) or set(master_ids) != set(final_id_list):
+        raise RuntimeError("locked final split is not an exact bijection to holdout rows")
+    cases = master.assign(case_id=master_ids).sort_values("case_id")
     development = pd.read_parquet(paths.root / "data/silver/synthetic_cases_development.parquet")
     controls = pd.read_parquet(paths.root / "data/staging/nist_controls_raw.parquet")
     regulations = pd.read_parquet(paths.root / "data/staging/cfr_raw.parquet")
@@ -153,12 +164,12 @@ def run_final_once() -> str:
             development,
             controls,
             ActionLedger(
-                paths.root / f"artifacts/final_{name}_action_ledger_v9.sqlite",
+                paths.root / f"artifacts/final_{name}_action_ledger_v10.sqlite",
                 recovery_authority=configured_recovery_authority(),
             ),
             ApprovalAuthority(secrets.token_bytes(32)),
             risk_service=frozen_risk,
-            state_dir=paths.root / f"artifacts/final_graph_state_v4/{name}",
+            state_dir=paths.root / f"artifacts/final_graph_state_v5/{name}",
             regulations=regulations,
             require_cuda_retrieval=True,
             identity_provider=identity_provider,
@@ -325,6 +336,7 @@ def run_final_once() -> str:
                             react[:3],
                             react[3]["requested_tools"],
                             react[3]["requested_arguments"],
+                            llm_analysis=react[3],
                             session_token=session_token,
                             context_id=react[3].get("context_id"),
                         ),
@@ -349,6 +361,7 @@ def run_final_once() -> str:
                             case,
                             CONFIGS["AG6_controlflow_g"],
                             prediction[:3],
+                            llm_analysis=prediction[3],
                             session_token=session_token,
                             context_id=prediction[3].get("context_id"),
                         ),

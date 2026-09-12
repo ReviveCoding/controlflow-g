@@ -79,7 +79,7 @@ def test_every_final_consumer_verifier_rejects_result_replacement(
         verify_final_run_outputs(paths)
 
 
-def test_progress_chain_rejects_deletion_and_head_rollback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_progress_chain_recovers_head_lag_but_rejects_deletion(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CONTROLFLOW_AUDIT_TRUST_DIR", str(tmp_path / "trust"))
     attestor = FinalRunAttestor()
     initial = attestor.initialize_progress("run", "freeze", {"records": {}, "active_work_id": None})
@@ -94,9 +94,10 @@ def test_progress_chain_rejects_deletion_and_head_rollback(tmp_path: Path, monke
         }
     )
     head_path.write_text(json.dumps(archived_head), encoding="utf-8")
-    with pytest.raises(RuntimeError, match=r"progress head rollback|progress chain"):
-        # The later protected entry makes an archived head rollback detectable.
-        attestor.read_progress("run", "freeze")
+    # A fully signed contiguous successor is the entry-durable/head-update
+    # crash window and is recovered by advancing the authenticated head.
+    assert attestor.read_progress("run", "freeze")[-1] == advanced
+    assert attestor.read_anchor("final-progress-run.json")["sequence"] == 1
     attestor.write_anchor(
         "final-progress-run.json",
         {
@@ -107,5 +108,24 @@ def test_progress_chain_rejects_deletion_and_head_rollback(tmp_path: Path, monke
         },
     )
     (attestor.trust / "final-progress-run-00000001.json").unlink()
-    with pytest.raises(RuntimeError, match=r"head rollback|entry deletion|missing protected"):
+    with pytest.raises(RuntimeError, match=r"head rollback|entry deletion|missing protected|head exceeds"):
+        attestor.read_progress("run", "freeze")
+
+
+def test_progress_chain_rejects_divergent_signed_orphan(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CONTROLFLOW_AUDIT_TRUST_DIR", str(tmp_path / "trust"))
+    attestor = FinalRunAttestor()
+    attestor.initialize_progress("run", "freeze", {"records": {}, "active_work_id": None})
+    divergent = {
+        "run_id": "run",
+        "freeze_hash": "freeze",
+        "sequence": 1,
+        "previous_entry_hash": "NOT_THE_HEAD",
+        "records": {},
+        "active_work_id": None,
+    }
+    (attestor.trust / "final-progress-run-00000001.json").write_text(
+        json.dumps(attestor.envelope(divergent)), encoding="utf-8"
+    )
+    with pytest.raises(RuntimeError, match="chain validation"):
         attestor.read_progress("run", "freeze")

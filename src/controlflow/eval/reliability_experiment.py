@@ -100,7 +100,13 @@ def _tool_fault(kind: str, tool_name: str = "probe") -> tuple[bool, int]:
             severity=Severity.LOW,
         )
     except RuntimeError:
-        return len(registry.audit_events) == 2, attempts["count"] - 1
+        if kind == "timeout":
+            detected = len(registry.audit_events) == 1 and registry.audit_events[0]["status"] == "timeout_indeterminate"
+        else:
+            detected = len(registry.audit_events) == 2 and all(
+                event["status"] == "error" for event in registry.audit_events
+            )
+        return detected, attempts["count"] - 1
     return False, attempts["count"] - 1
 
 

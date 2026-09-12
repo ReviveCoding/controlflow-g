@@ -51,8 +51,8 @@ def run() -> str:
     identity_provider, session_credentials = SessionIdentityProvider.issue_for_business_units(
         set(frame["business_unit"].astype(str))
     )
-    trace_target = paths.root / "results/ablation_traces.repeat9.inprogress.parquet"
-    summary_target = paths.root / "results/ablation.repeat9.inprogress.parquet"
+    trace_target = paths.root / "results/ablation_traces.repeat10.inprogress.parquet"
+    summary_target = paths.root / "results/ablation.repeat10.inprogress.parquet"
     traces: list[dict[str, object]] = []
     summaries: list[dict[str, object]] = []
     completed: set[str] = set()
@@ -71,12 +71,12 @@ def run() -> str:
                 train,
                 controls,
                 ActionLedger(
-                    paths.root / f"artifacts/ablation_{name}_action_ledger_v11.sqlite",
+                    paths.root / f"artifacts/ablation_{name}_action_ledger_v12.sqlite",
                     recovery_authority=configured_recovery_authority(),
                 ),
                 ApprovalAuthority(secrets.token_bytes(32)),
                 risk_service=risk_service,
-                state_dir=paths.root / f"artifacts/ablation_graph_state_v6/{name}",
+                state_dir=paths.root / f"artifacts/ablation_graph_state_v7/{name}",
                 regulations=regulations,
                 require_cuda_retrieval=True,
                 identity_provider=identity_provider,
@@ -109,6 +109,7 @@ def run() -> str:
                         row,
                         config,
                         prediction[:3],
+                        llm_analysis=prediction[3],
                         session_token=session_token,
                         context_id=context_id,
                     ),

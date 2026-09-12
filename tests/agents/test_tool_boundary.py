@@ -402,3 +402,115 @@ def test_tool_timeout_returns_within_declared_wall_clock() -> None:
             severity=Severity.LOW,
         )
     assert time.perf_counter() - started < 0.2
+
+
+def test_timed_out_write_cannot_commit_later(tmp_path: Path) -> None:
+    ledger = ActionLedger(tmp_path / "timeout-write.sqlite")
+    authority = ApprovalAuthority(b"timeout-write-secret")
+    payload = {"status": "investigated"}
+    evidence_hash = "evidence"
+    token = authority.issue_system(
+        case_id="case",
+        action_type="propose_case_update",
+        payload=payload,
+        workflow_version="workflow",
+        policy_version="local-policy-v1",
+        evidence_hash=evidence_hash,
+        risk_tier=1,
+        authorization_outcome="ALLOW",
+    )
+
+    def implementation(value: Probe) -> Probe:
+        time.sleep(0.05)
+        ledger.execute_simulated(
+            case_id="case",
+            action_type="propose_case_update",
+            payload=payload,
+            workflow_version="workflow",
+            authorization_token=token,
+            approval_authority=authority,
+            evidence_hash=evidence_hash,
+        )
+        return value
+
+    registry = ToolRegistry(LocalPolicyBackend())
+    registry.register(
+        ToolSpec(
+            "slow_write",
+            Probe,
+            Probe,
+            1,
+            False,
+            frozenset({"Control Analyst"}),
+            frozenset({"consumer"}),
+            False,
+            0.01,
+            0,
+            implementation,
+        )
+    )
+    identity = IdentityContext(
+        user_id="analyst",
+        role="Control Analyst",
+        business_unit="consumer",
+        region="US",
+        clearance=1,
+        purpose="investigation",
+        session_id="session",
+    )
+    with pytest.raises(RuntimeError, match="failed after"):
+        registry.invoke(
+            "slow_write",
+            {"value": 1},
+            identity=identity,
+            scope="consumer",
+            data_classification=0,
+            severity=Severity.LOW,
+        )
+    time.sleep(0.1)
+    with ledger._connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM action_ledger").fetchone()[0] == 0
+
+
+def test_context_id_is_bound_to_exact_ordered_tool_arguments(tmp_path: Path) -> None:
+    controls = pd.read_parquet("data/staging/nist_controls_raw.parquet").head(1)
+    row = pd.Series(
+        {
+            "case_id": "case",
+            "entity_id": "entity",
+            "business_unit": "consumer",
+            "narrative": "exception",
+            "event_timestamp": pd.Timestamp("2025-01-01", tz="UTC"),
+            "pit_historical_failures": 0,
+            "future_failures": 0,
+            "repeat_count": 0,
+            "data_sensitivity": 0,
+        }
+    )
+    provider, credentials = _sessions("consumer")
+    workflow = GovernedWorkflow(
+        pd.DataFrame([row]),
+        controls,
+        ActionLedger(tmp_path / "plan-binding.sqlite"),
+        ApprovalAuthority(b"secret"),
+        risk_service=FakeRisk(),  # type: ignore[arg-type]
+        identity_provider=provider,
+    )
+    context = json.loads(
+        workflow.context_for_llm(
+            row,
+            WorkflowConfig(retrieval=False),
+            session_token=credentials["consumer"],
+            selected_tool_calls=[("query_case_data", {"case_id": "case"})],
+        )
+    )
+    with pytest.raises(PermissionError, match="context-bound ordered plan"):
+        workflow.execute(
+            row,
+            WorkflowConfig(retrieval=False),
+            ("LOW", "AUTO", True),
+            ["query_case_data"],
+            [{"case_id": "different"}],
+            session_token=credentials["consumer"],
+            context_id=context["_context_id"],
+        )

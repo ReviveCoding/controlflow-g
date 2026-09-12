@@ -385,6 +385,9 @@ class ActionLedger:
         policy_version: str,
         evidence_hash: str,
     ) -> ActionReceipt:
+        from controlflow.tools.deadline import assert_tool_deadline_active
+
+        assert_tool_deadline_active()
         self._require_integrity()
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -436,6 +439,9 @@ class ActionLedger:
         policy_version: str = "local-policy-v1",
         evidence_hash: str = "none",
     ) -> ActionReceipt:
+        from controlflow.tools.deadline import assert_tool_deadline_active
+
+        assert_tool_deadline_active()
         self._require_integrity()
         key = action_key(case_id, action_type, payload, workflow_version)
         normalized = canonical_json(payload).decode()
@@ -463,6 +469,7 @@ class ActionLedger:
                         connection.execute("ROLLBACK")
                         raise PermissionError("no persisted entitled approval for this action")
                     result_hash = hashlib.sha256(canonical_json({"simulated": True, "payload": payload})).hexdigest()
+                    assert_tool_deadline_active()
                     connection.execute(
                         """UPDATE action_ledger SET status='EXECUTED', approved_at=?, executed_at=?, result_hash=?
                         WHERE action_id=? AND status='PENDING_REVIEW'""",
@@ -475,6 +482,7 @@ class ActionLedger:
                         actor_id=reviewer_id,
                         payload_hash=result_hash,
                     )
+                    assert_tool_deadline_active()
                     connection.execute("COMMIT")
                     self._sync_action_anchor()
                     return ActionReceipt(row[0], key, "EXECUTED", executed=True)
@@ -484,6 +492,7 @@ class ActionLedger:
                 connection.execute("ROLLBACK")
                 raise PermissionError("human approval requires a persisted PENDING_REVIEW request")
             result_hash = hashlib.sha256(canonical_json({"simulated": True, "payload": payload})).hexdigest()
+            assert_tool_deadline_active()
             connection.execute(
                 """INSERT INTO action_ledger
                 (idempotency_key, case_id, action_type, normalized_payload, workflow_version,
@@ -505,6 +514,7 @@ class ActionLedger:
             self._append_event(
                 connection, action_id=action_id, event_type="EXECUTED", actor_id=reviewer_id, payload_hash=result_hash
             )
+            assert_tool_deadline_active()
             connection.execute("COMMIT")
         self._sync_action_anchor()
         return ActionReceipt(action_id, key, "EXECUTED", executed=True)

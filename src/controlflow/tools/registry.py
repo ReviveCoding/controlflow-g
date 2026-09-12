@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from controlflow.authorization.policy import LocalPolicyBackend, ToolPolicyInput
 from controlflow.core.state import canonical_json
 from controlflow.schemas import AuthorizationOutcome, IdentityContext, Severity
+from controlflow.tools.deadline import ToolDeadlineLease, bind_tool_deadline, reset_tool_deadline
 
 InputT = TypeVar("InputT", bound=BaseModel)
 OutputT = TypeVar("OutputT", bound=BaseModel)
@@ -131,16 +132,21 @@ class ToolRegistry:
         attempts = 1 if not spec.read_only else spec.max_retries + 1
         for attempt in range(attempts):
             outcome: Queue[tuple[bool, object]] = Queue(maxsize=1)
+            lease = ToolDeadlineLease(time.monotonic() + spec.timeout_seconds)
 
             def run_tool(
                 result_queue: Queue[tuple[bool, object]] = outcome,
                 implementation: Callable[[BaseModel], BaseModel] = spec.implementation,
                 input_value: BaseModel = parsed,
+                deadline_lease: ToolDeadlineLease = lease,
             ) -> None:
+                token = bind_tool_deadline(deadline_lease)
                 try:
                     result_queue.put((True, implementation(input_value)))
                 except BaseException as exc:  # propagated on the invoking thread
                     result_queue.put((False, exc))
+                finally:
+                    reset_tool_deadline(token)
 
             # A daemon worker makes the deadline enforceable for the caller and
             # process lifecycle. Implementations are bounded, typed local tools;
@@ -167,6 +173,7 @@ class ToolRegistry:
                 )
                 return cast(BaseModel, output)
             except Empty as exc:
+                lease.cancel()
                 last_error = exc
                 self._audit(
                     identity,
@@ -174,10 +181,14 @@ class ToolRegistry:
                         **base_event,
                         "attempt": attempt + 1,
                         "authorization": authorization.outcome.value,
-                        "status": "timeout",
+                        "status": "timeout_indeterminate",
                         "duration_seconds": time.perf_counter() - started,
                     },
                 )
+                # A timed-out attempt is never overlapped by a retry. Read
+                # calls abort this invocation; write commits recheck the lease
+                # inside the only permitted action ledger boundary.
+                break
             except PermissionError:
                 self._audit(
                     identity,

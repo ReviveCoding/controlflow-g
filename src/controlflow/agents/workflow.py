@@ -6,9 +6,10 @@ import re
 import secrets
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -180,6 +181,9 @@ class WorkflowTrace:
     context_gpu_seconds: float = 0.0
     retry_count: int = 0
     tool_argument_errors: int = 0
+    executed_tool_steps: list[dict[str, object]] = field(default_factory=list)
+    llm_analysis_hash: str = "none"
+    llm_analysis_valid: bool = True
 
 
 class GovernedWorkflow:
@@ -233,6 +237,7 @@ class GovernedWorkflow:
         self._context_tool_outputs: dict[tuple[str, str, str], dict[str, BaseModel]] = {}
         self._context_evidence: dict[tuple[str, str, str], list[TemporalEvidence]] = {}
         self._context_attempted_tools: dict[tuple[str, str, str], frozenset[str]] = {}
+        self._context_plans: dict[tuple[str, str, str], list[tuple[str, dict[str, object]]]] = {}
         origin = datetime(2020, 1, 1, tzinfo=UTC)
         self.evidence_corpus: list[TemporalEvidence] = []
         for control in controls.itertuples():
@@ -713,6 +718,9 @@ class GovernedWorkflow:
         self._context_tool_outputs[cache_key] = outputs
         self._context_evidence[cache_key] = list(retrieved_by_tool.values())
         self._context_attempted_tools[cache_key] = frozenset(name for name, _ in ordered_calls)
+        self._context_plans[cache_key] = [
+            (name, json.loads(json.dumps(arguments, sort_keys=True))) for name, arguments in ordered_calls
+        ]
         context = json.dumps(
             {
                 "search_controls": [retrieved_by_tool[item].text[:300] for item in control_ids],
@@ -749,6 +757,7 @@ class GovernedWorkflow:
         llm_prediction: tuple[str, str, bool],
         llm_tool_requests: list[str] | None = None,
         llm_tool_arguments: list[dict[str, object]] | None = None,
+        llm_analysis: dict[str, Any] | None = None,
         *,
         session_token: str,
         context_id: str | None = None,
@@ -775,6 +784,14 @@ class GovernedWorkflow:
             cache_key = matching_keys[0] if matching_keys else (str(row.case_id), session_token, "none")
         else:
             cache_key = (str(row.case_id), session_token, context_id)
+        cached_plan = self._context_plans.get(cache_key)
+        submitted_plan = list(zip(llm_tool_requests or [], llm_tool_arguments or [], strict=False))
+        if (
+            llm_tool_requests is not None
+            and cached_plan is not None
+            and canonical_json(submitted_plan) != canonical_json(cached_plan)
+        ):
+            raise PermissionError("submitted tool plan does not match the context-bound ordered plan")
         tool_argument_errors = max(0, duplicate_requests) + int(malformed_plan)
         structured_tool_results = dict(self._context_observations.get(cache_key, {}))
         cached_outputs = self._context_tool_outputs.get(cache_key, {})
@@ -1233,6 +1250,13 @@ class GovernedWorkflow:
             disposition = "REVIEW_REQUIRED" if severity in {"HIGH", "CRITICAL"} and config.hitl else "AUTO"
         else:
             disposition = llm_disposition
+        analysis = llm_analysis or {}
+        analysis_valid = (
+            bool(analysis.get("analysis_valid", False)) if analysis.get("architecture_mode") == "governed" else True
+        )
+        root_cause = str(analysis.get("root_cause_hypothesis", "control execution variance"))[:500]
+        bounded_recommendation = str(analysis.get("recommended_action", "INVESTIGATE"))
+        analysis_hash = hashlib.sha256(canonical_json(analysis)).hexdigest() if analysis else "none"
         if config.structured_output:
             try:
                 FinalAgentOutput(
@@ -1242,10 +1266,10 @@ class GovernedWorkflow:
                     controls=(control_match.group(0),) if control_match else (),
                     regulations=(regulation_match.group(0),) if regulation_match else (),
                     evidence=tuple(item.evidence_id for item in evidence),
-                    root_cause_hypotheses=("control execution variance",),
+                    root_cause_hypotheses=(root_cause,),
                     recommended_actions=(
                         ProposedAction(
-                            action_type="propose_case_update",
+                            action_type=(bounded_recommendation.casefold() if analysis else "propose_case_update"),
                             payload={"status": "investigated"},
                             risk_tier=2 if severity in {"HIGH", "CRITICAL"} else 1,
                             rollback_available=True,
@@ -1254,7 +1278,7 @@ class GovernedWorkflow:
                     automation_decision=Disposition(disposition),
                     human_review_required=disposition == "REVIEW_REQUIRED",
                 )
-                structured_valid = True
+                structured_valid = analysis_valid
             except (ValidationError, ValueError):
                 structured_valid = False
         else:
@@ -1352,6 +1376,11 @@ class GovernedWorkflow:
         state.structured_evidence = {
             item.evidence_id: {"source": item.source, "content_sha256": item.content_sha256} for item in evidence
         }
+        state.case_context["llm_analysis"] = {
+            "root_cause_hypothesis": root_cause,
+            "recommended_action": bounded_recommendation,
+            "analysis_hash": analysis_hash,
+        }
         if risk_probabilities is not None:
             state.risk_prediction = RiskPrediction(
                 model_id="calibrated-logistic-risk-v1",
@@ -1391,6 +1420,12 @@ class GovernedWorkflow:
         self._context_tool_outputs.pop(cache_key, None)
         self._context_evidence.pop(cache_key, None)
         self._context_attempted_tools.pop(cache_key, None)
+        authoritative_plan = self._context_plans.pop(cache_key, cached_plan or submitted_plan)
+        executed_tool_steps = [
+            {"step_id": index, "tool_name": name, "tool_arguments": arguments}
+            for index, (name, arguments) in enumerate(authoritative_plan)
+            if name in tool_calls
+        ]
         return WorkflowTrace(
             case_id=str(row.case_id),
             predicted_severity=severity,
@@ -1413,4 +1448,7 @@ class GovernedWorkflow:
             latency_seconds=context_latency + time.perf_counter() - started,
             context_gpu_seconds=context_gpu_seconds,
             tool_argument_errors=tool_argument_errors,
+            executed_tool_steps=executed_tool_steps,
+            llm_analysis_hash=analysis_hash,
+            llm_analysis_valid=analysis_valid,
         )

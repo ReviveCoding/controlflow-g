@@ -134,11 +134,14 @@ class FinalRunAttestor:
             for path in self.trust.glob(f"{prefix}*.json")
             if path.stem.removeprefix(prefix).isdigit()
         }
-        if observed_sequences != set(range(expected_last + 1)):
+        if not observed_sequences or observed_sequences != set(range(max(observed_sequences) + 1)):
             raise RuntimeError("protected final progress head rollback or entry deletion")
+        observed_last = max(observed_sequences)
+        if observed_last < expected_last:
+            raise RuntimeError("protected final progress head exceeds available entries")
         history: list[dict[str, Any]] = []
         previous_hash = "GENESIS"
-        for sequence in range(expected_last + 1):
+        for sequence in range(observed_last + 1):
             entry = self.read_anchor(f"final-progress-{run_id}-{sequence:08d}.json")
             if (
                 entry.get("run_id") != run_id
@@ -149,7 +152,22 @@ class FinalRunAttestor:
                 raise RuntimeError("protected final progress chain validation failed")
             previous_hash = hashlib.sha256(canonical_json(entry)).hexdigest()
             history.append(entry)
-        if previous_hash != head.get("entry_hash"):
+            if sequence == expected_last and previous_hash != head.get("entry_hash"):
+                raise RuntimeError("protected final progress head rollback or mismatch")
+        if observed_last > expected_last:
+            # A valid contiguous successor is the normal entry-durable/head-lag
+            # crash window. Advance only after verifying its complete chain.
+            self.write_anchor(
+                f"final-progress-{run_id}.json",
+                {
+                    "run_id": run_id,
+                    "freeze_hash": freeze_hash,
+                    "sequence": observed_last,
+                    "entry_hash": previous_hash,
+                    "recovered_head_lag_entries": observed_last - expected_last,
+                },
+            )
+        elif previous_hash != head.get("entry_hash"):
             raise RuntimeError("protected final progress head rollback or mismatch")
         return history
 
