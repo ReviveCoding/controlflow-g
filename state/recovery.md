@@ -79,3 +79,11 @@
 - GPU-scope closure now atomically closes worker admission, drains existing workers, and releases the cross-process file lock under one shared condition. Admission during closure fails closed and is audited; a deterministic race regression proves the implementation cannot start in the former gap.
 - P19/P20 were regenerated after repair: 15/15 attacks blocked with zero success; 12/12 detected recoveries with zero duplicate execution.
 - Exact clean-export validation and repeat-16 independent review are required before P24 completion.
+
+## 2026-09-12 repeat-16 pre-final repair
+
+- Final holdout remains sealed (`sealed_test_consumed=false`); P25/P26 were not invoked.
+- Repeat-16 correctness and security reviews passed. The methodology HIGH cleanup/publication race was classified `VALID`; see `reports/reviews/p24_repeat16_dispositions.md`.
+- Tool workers publish success or error only after deadline-context reset, worker-accounting removal, and sole-slot release. A deterministic handshake regression proves an immediate sequential call cannot race completed-worker cleanup.
+- AG6 and all P22 configurations were rerun on fresh versioned paths, followed by P18/P19/P20/P21-business/P23 regeneration. P19 retains 15/15 blocked attacks; P20 retains 12/12 detected recoveries and zero duplicate execution.
+- Exact clean-export validation and repeat-17 independent review are required before P24 completion.

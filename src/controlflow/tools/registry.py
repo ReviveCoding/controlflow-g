@@ -150,13 +150,17 @@ class ToolRegistry:
             ) -> None:
                 token = bind_tool_deadline(current_lease)
                 try:
-                    current_outcome.put(("value", spec.implementation(parsed)))
+                    outcome_kind, outcome_value = "value", spec.implementation(parsed)
                 except Exception as exc:
-                    current_outcome.put(("error", exc))
+                    outcome_kind, outcome_value = "error", exc
                 finally:
                     reset_tool_deadline(token)
                     unregister_tool_worker()
                     _TOOL_WORKER_SLOTS.release()
+                # Publish only after cleanup. A sequential caller can never
+                # observe success/error while the completed worker still owns
+                # the sole admission slot or GPU-lifetime accounting entry.
+                current_outcome.put((outcome_kind, outcome_value))
 
             if not _TOOL_WORKER_SLOTS.acquire(blocking=False):
                 self._audit(

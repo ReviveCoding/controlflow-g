@@ -11,6 +11,7 @@ import pandas as pd
 import pytest
 from pydantic import BaseModel
 
+import controlflow.tools.registry as registry_module
 from controlflow.agents.workflow import GovernedWorkflow, WorkflowConfig
 from controlflow.audit.ledger import ActionLedger
 from controlflow.authorization.identity import SessionIdentityProvider
@@ -421,6 +422,78 @@ def test_tool_timeout_returns_within_declared_wall_clock() -> None:
     while any(thread.name == "controlflow-tool-slow_probe" for thread in enumerate_threads()):
         assert time.monotonic() < deadline
         time.sleep(0.01)
+
+
+def test_success_is_not_published_before_worker_cleanup(monkeypatch: pytest.MonkeyPatch) -> None:
+    cleanup_entered = Event()
+    allow_cleanup = Event()
+    caller_done = Event()
+    result_values: list[int] = []
+    original_unregister = registry_module.unregister_tool_worker
+
+    def blocked_unregister() -> None:
+        cleanup_entered.set()
+        assert allow_cleanup.wait(timeout=2)
+        original_unregister()
+
+    monkeypatch.setattr(registry_module, "unregister_tool_worker", blocked_unregister)
+    registry = ToolRegistry(LocalPolicyBackend())
+    registry.register(
+        ToolSpec(
+            "cleanup_handshake",
+            Probe,
+            Probe,
+            0,
+            True,
+            frozenset({"Control Analyst"}),
+            frozenset({"consumer"}),
+            False,
+            1.0,
+            0,
+            lambda value: value,
+        )
+    )
+    identity = IdentityContext(
+        user_id="analyst",
+        role="Control Analyst",
+        business_unit="consumer",
+        region="US",
+        clearance=1,
+        purpose="investigation",
+        session_id="session",
+    )
+
+    def invoke_first() -> None:
+        result = registry.invoke(
+            "cleanup_handshake",
+            {"value": 1},
+            identity=identity,
+            scope="consumer",
+            data_classification=0,
+            severity=Severity.LOW,
+        )
+        result_values.append(result.value)  # type: ignore[attr-defined]
+        caller_done.set()
+
+    caller = Thread(target=invoke_first)
+    caller.start()
+    assert cleanup_entered.wait(timeout=1)
+    assert not caller_done.is_set()
+    allow_cleanup.set()
+    caller.join(timeout=1)
+    assert not caller.is_alive()
+    assert result_values == [1]
+    assert (
+        registry.invoke(
+            "cleanup_handshake",
+            {"value": 2},
+            identity=identity,
+            scope="consumer",
+            data_classification=0,
+            severity=Severity.LOW,
+        ).value
+        == 2
+    )
 
 
 def test_never_returning_precommit_work_is_bounded_and_cancelled() -> None:

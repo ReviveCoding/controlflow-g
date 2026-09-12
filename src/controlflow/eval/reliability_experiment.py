@@ -121,7 +121,7 @@ def run() -> str:
     paths = ProjectPaths.discover()
     recovery_authority = configured_recovery_authority()
     ledger = ActionLedger(
-        paths.root / "artifacts/reliability_action_ledger_v12.sqlite",
+        paths.root / "artifacts/reliability_action_ledger_v13.sqlite",
         recovery_authority=recovery_authority,
     )
     authority = ApprovalAuthority(

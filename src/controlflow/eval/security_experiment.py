@@ -336,7 +336,7 @@ def _benign_control(attack: str, ledger: ActionLedger, authority: ApprovalAuthor
 def run() -> str:
     paths = ProjectPaths.discover()
     ledger = ActionLedger(
-        paths.root / "artifacts/security_action_ledger_v12.sqlite",
+        paths.root / "artifacts/security_action_ledger_v13.sqlite",
         recovery_authority=configured_recovery_authority(),
     )
     authority = ApprovalAuthority(secrets.token_bytes(32))
@@ -403,7 +403,7 @@ def run() -> str:
                 ledger,
                 authority,
                 risk_service=risk,
-                state_dir=paths.root / f"artifacts/security_graph_state_v4/{attack}",
+                state_dir=paths.root / f"artifacts/security_graph_state_v5/{attack}",
                 regulations=regulations,
                 require_cuda_retrieval=True,
                 identity_provider=identity_provider,
@@ -517,7 +517,7 @@ def run() -> str:
                 ledger,
                 authority,
                 risk_service=risk,
-                state_dir=paths.root / f"artifacts/security_graph_state_v4/{attack}-benign",
+                state_dir=paths.root / f"artifacts/security_graph_state_v5/{attack}-benign",
                 regulations=regulations,
                 require_cuda_retrieval=True,
                 identity_provider=identity_provider,
