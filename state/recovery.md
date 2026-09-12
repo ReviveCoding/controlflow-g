@@ -38,3 +38,14 @@
 - P19 regenerated with 15/15 programmed attacks blocked, P20 with 12/12 injected failures recovered and no duplicate execution, P22 with 15 configurations and 1,200 unique traces, followed by P21/P23 regeneration.
 - Artifact registration and exact clean-export validation are required before repeat-12 review.
 - The first exact export exposed a scheduler-sensitive commit-race test setup; its pre-commit window was made deterministic and passed five consecutive runs without changing runtime behavior.
+
+## 2026-09-12 repeat-12 pre-final repair
+
+- Final holdout remains sealed (`sealed_test_consumed=false`); P25/P26 were not invoked.
+- Repeat-12 correctness, methodology, and security HIGH findings were all classified `VALID`; see `reports/reviews/p24_repeat12_dispositions.md`.
+- Tool deadlines use bounded pre-commit workers with commit-permit cancellation; already-entered atomic commits are reconciled and timeout attempts are never retried.
+- Governed analysis uses one exact five-key schema, with explicit missing-evidence and unique-citation invariants.
+- Independent analysis support now checks trusted claim relations, time, authorization, hashes, identifier grounding, and action/disposition coherence; evaluation separately checks the benchmark-expected recommendation.
+- No-verifier and no-structured-output ablations now causally remove their named checks and include those modes in cache identity.
+- P16/P17, P19, P20, P21, P22, and P23 were regenerated. AG6 validation remains adverse at STC `0.0`; all 15 ablation estimates remain `0.0` and are retained as a floor/null result.
+- Full source checks pass: Ruff, strict mypy (74 files), and pytest (71 tests). Exact-export and independent repeat-13 review remain required before P24 completion.

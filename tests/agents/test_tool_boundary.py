@@ -412,8 +412,56 @@ def test_tool_timeout_returns_within_declared_wall_clock() -> None:
             severity=Severity.LOW,
         )
     elapsed = time.perf_counter() - started
-    assert 0.03 <= elapsed < 0.2
-    assert registry.audit_events[-1]["status"] == "timeout_completed_without_detached_worker"
+    assert 0.02 <= elapsed < 0.2
+    assert registry.audit_events[-1]["status"] == "timeout_precommit_cancelled"
+
+
+def test_never_returning_precommit_work_is_bounded_and_cancelled() -> None:
+    release = Event()
+
+    def implementation(value: Probe) -> Probe:
+        release.wait()
+        return value
+
+    registry = ToolRegistry(LocalPolicyBackend())
+    registry.register(
+        ToolSpec(
+            "hung_probe",
+            Probe,
+            Probe,
+            0,
+            True,
+            frozenset({"Control Analyst"}),
+            frozenset({"consumer"}),
+            False,
+            0.01,
+            0,
+            implementation,
+        )
+    )
+    identity = IdentityContext(
+        user_id="analyst",
+        role="Control Analyst",
+        business_unit="consumer",
+        region="US",
+        clearance=1,
+        purpose="investigation",
+        session_id="session",
+    )
+    started = time.perf_counter()
+    with pytest.raises(RuntimeError, match="failed after"):
+        registry.invoke(
+            "hung_probe",
+            {"value": 1},
+            identity=identity,
+            scope="consumer",
+            data_classification=0,
+            severity=Severity.LOW,
+        )
+    elapsed = time.perf_counter() - started
+    release.set()
+    assert elapsed < 0.2
+    assert registry.audit_events[-1]["status"] == "timeout_precommit_cancelled"
 
 
 def test_timed_out_write_cannot_commit_later(tmp_path: Path) -> None:
@@ -489,7 +537,7 @@ def test_timeout_racing_entered_commit_waits_and_reconciles() -> None:
     release = Event()
     caller_done = Event()
     committed: list[int] = []
-    returned: list[Probe] = []
+    errors: list[str] = []
 
     def implementation(value: Probe) -> Probe:
         with tool_commit_section():
@@ -525,7 +573,7 @@ def test_timeout_racing_entered_commit_waits_and_reconciles() -> None:
     )
 
     def invoke() -> None:
-        returned.append(
+        try:
             registry.invoke(
                 "commit_race",
                 {"value": 7},
@@ -533,8 +581,9 @@ def test_timeout_racing_entered_commit_waits_and_reconciles() -> None:
                 scope="consumer",
                 data_classification=0,
                 severity=Severity.LOW,
-            )  # type: ignore[arg-type]
-        )
+            )
+        except RuntimeError as exc:
+            errors.append(str(exc))
         caller_done.set()
 
     caller = Thread(target=invoke)
@@ -548,8 +597,8 @@ def test_timeout_racing_entered_commit_waits_and_reconciles() -> None:
     caller.join(timeout=1)
     assert not caller.is_alive()
     assert committed == [7]
-    assert returned == [Probe(value=7)]
-    assert registry.audit_events[-1]["status"] == "success"
+    assert errors == ["tool commit_race failed after 1 attempts"]
+    assert registry.audit_events[-1]["status"] == "timeout_after_commit_reconciled"
 
 
 def test_context_id_is_bound_to_exact_ordered_tool_arguments(tmp_path: Path, tool_corpus: Path) -> None:

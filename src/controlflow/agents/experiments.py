@@ -13,7 +13,7 @@ import joblib
 import numpy as np
 import pandas as pd
 import torch
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from controlflow.agents.workflow import GovernedWorkflow, WorkflowConfig, WorkflowTrace
@@ -35,7 +35,17 @@ class GovernedAnalysis(BaseModel):
     disposition: Literal["AUTO", "REVIEW_REQUIRED", "INSUFFICIENT_EVIDENCE", "DENY"]
     root_cause_hypothesis: str = Field(min_length=3, max_length=500)
     recommended_action: Literal["INVESTIGATE", "REQUEST_EVIDENCE", "ESCALATE"]
-    supporting_evidence_ids: list[str] = Field(min_length=1)
+    supporting_evidence_ids: list[str]
+
+    @model_validator(mode="after")
+    def evidence_required_unless_insufficient(self) -> GovernedAnalysis:
+        if not self.supporting_evidence_ids and self.disposition != "INSUFFICIENT_EVIDENCE":
+            raise ValueError("only INSUFFICIENT_EVIDENCE may omit supporting evidence")
+        if not self.supporting_evidence_ids and self.recommended_action != "REQUEST_EVIDENCE":
+            raise ValueError("an uncited insufficient-evidence analysis must request evidence")
+        if len(self.supporting_evidence_ids) != len(set(self.supporting_evidence_ids)):
+            raise ValueError("supporting evidence IDs must be unique")
+        return self
 
 
 CONFIGS = {
@@ -169,6 +179,8 @@ def _predict_one(
     mode: str = "governed",
     available_tools: tuple[str, ...] | None = None,
     tool_context_loader: Callable[[list[str], list[dict[str, Any]]], str] | None = None,
+    governed_schema_validation: bool = True,
+    governed_evidence_validation: bool = True,
 ) -> tuple[str, str, bool, dict[str, Any]]:
     tokenizer, model = _load_llm()
     severity: str
@@ -198,7 +210,7 @@ def _predict_one(
         ),
         "governed": (
             "Use the calibrated risk, anomaly, structured case data, and retrieved evidence. Return severity, "
-            "disposition, one root_cause_hypothesis, and recommended_action. Use exactly four JSON keys: "
+            "disposition, one root_cause_hypothesis, and recommended_action. Use exactly five JSON keys: "
             "severity, disposition, root_cause_hypothesis, recommended_action, supporting_evidence_ids. "
             "supporting_evidence_ids must contain only IDs in tool observations. recommended_action must be exactly "
             "INVESTIGATE, REQUEST_EVIDENCE, or ESCALATE. Missing or extra keys fail validation."
@@ -297,7 +309,7 @@ def _predict_one(
     try:
         start, end = text.index("{"), text.rindex("}") + 1
         payload = json.loads(text[start:end])
-        if mode == "governed":
+        if mode == "governed" and governed_schema_validation:
             governed = GovernedAnalysis.model_validate(payload)
             available_evidence = {
                 str(evidence_id)
@@ -305,7 +317,7 @@ def _predict_one(
                 if isinstance(step, dict) and isinstance(step.get("observation"), dict)
                 for evidence_id in step["observation"].get("evidence_ids", [])
             }
-            if not set(governed.supporting_evidence_ids).issubset(available_evidence):
+            if governed_evidence_validation and not set(governed.supporting_evidence_ids).issubset(available_evidence):
                 raise ValueError("governed analysis cites evidence outside the authorized observations")
             severity, disposition = governed.severity, governed.disposition
             root_cause = governed.root_cause_hypothesis
@@ -313,6 +325,28 @@ def _predict_one(
             supporting_evidence_ids = list(governed.supporting_evidence_ids)
             analysis_valid = True
             valid = True
+        elif mode == "governed":
+            severity = str(payload["severity"]).upper()
+            disposition = str(payload["disposition"]).upper()
+            valid = severity in {"LOW", "MEDIUM", "HIGH", "CRITICAL"} and disposition in {
+                "AUTO",
+                "REVIEW_REQUIRED",
+                "INSUFFICIENT_EVIDENCE",
+                "DENY",
+            }
+            root_cause = str(payload.get("root_cause_hypothesis", ""))[:500]
+            recommended_action = str(payload.get("recommended_action", ""))[:100]
+            raw_ids = payload.get("supporting_evidence_ids", [])
+            supporting_evidence_ids = [str(value) for value in raw_ids] if isinstance(raw_ids, list) else []
+            if governed_evidence_validation:
+                available_evidence = {
+                    str(evidence_id)
+                    for step in tool_context.get("tool_steps", [])
+                    if isinstance(step, dict) and isinstance(step.get("observation"), dict)
+                    for evidence_id in step["observation"].get("evidence_ids", [])
+                }
+                valid = valid and set(supporting_evidence_ids).issubset(available_evidence)
+            analysis_valid = valid
         else:
             severity, disposition = str(payload["severity"]).upper(), str(payload["disposition"]).upper()
             valid = severity in {"LOW", "MEDIUM", "HIGH", "CRITICAL"} and disposition in {
@@ -339,6 +373,8 @@ def _predict_one(
         "root_cause_hypothesis": root_cause,
         "recommended_action": recommended_action,
         "analysis_valid": analysis_valid,
+        "governed_schema_validation": governed_schema_validation,
+        "governed_evidence_validation": governed_evidence_validation,
         "supporting_evidence_ids": supporting_evidence_ids,
     }
     return severity, disposition, valid, usage
@@ -428,12 +464,23 @@ def evaluate_trace(name: str, row: pd.Series, trace: WorkflowTrace, usage: dict[
     )
     authorization_correct = trace.authorization_outcome == str(row.authorization_outcome)
     nominal = trace.predicted_severity == row.severity and trace.predicted_disposition == row.expected_disposition
+    expected_recommendation = (
+        "INVESTIGATE"
+        if list(row.expected_actions)
+        else "REQUEST_EVIDENCE"
+        if str(row.expected_disposition) == "INSUFFICIENT_EVIDENCE"
+        else "ESCALATE"
+    )
+    governed_analysis = usage.get("architecture_mode") == "governed"
+    recommended_action_correct = (not governed_analysis) or (usage.get("recommended_action") == expected_recommendation)
     stc = (
         nominal
         and evidence_correct
         and trace.temporal_correct
         and authorization_correct
         and trace.structured_output_valid
+        and (not trace.llm_analysis_support_checked or trace.llm_analysis_supported)
+        and recommended_action_correct
     )
     executed_accuracy = _executed_tool_arguments_correct(row, trace)
     plan_accuracy = _tool_arguments_correct(row, usage)
@@ -480,6 +527,8 @@ def evaluate_trace(name: str, row: pd.Series, trace: WorkflowTrace, usage: dict[
         "llm_analysis_hash": trace.llm_analysis_hash,
         "llm_analysis_valid": trace.llm_analysis_valid,
         "llm_analysis_supported": trace.llm_analysis_supported,
+        "llm_analysis_support_checked": trace.llm_analysis_support_checked,
+        "recommended_action_correct": recommended_action_correct,
         "correct_tool_request": (
             bool(usage.get("requested_tools", []))
             and set(usage.get("requested_tools", [])).issubset(set(row.permitted_tools))
@@ -507,12 +556,12 @@ def run_agents(only: frozenset[str] | None = None) -> str:
             train,
             controls,
             ActionLedger(
-                paths.root / f"artifacts/agent_{name}_action_ledger_protocol12.sqlite",
+                paths.root / f"artifacts/agent_{name}_action_ledger_protocol13.sqlite",
                 recovery_authority=configured_recovery_authority(),
             ),
             ApprovalAuthority(secrets.token_bytes(32)),
             risk_service=risk_service,
-            state_dir=paths.root / f"artifacts/graph_state_v6/{name}",
+            state_dir=paths.root / f"artifacts/graph_state_v7/{name}",
             regulations=regulations,
             require_cuda_retrieval=True,
             identity_provider=identity_provider,

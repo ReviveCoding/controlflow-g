@@ -83,6 +83,7 @@ class FinalCheckpointTrace(BaseModel):
     llm_analysis_hash: str
     llm_analysis_valid: bool
     llm_analysis_supported: bool
+    llm_analysis_support_checked: bool
     correct_tool_request: bool
 
 

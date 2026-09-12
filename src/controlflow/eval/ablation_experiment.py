@@ -51,8 +51,8 @@ def run() -> str:
     identity_provider, session_credentials = SessionIdentityProvider.issue_for_business_units(
         set(frame["business_unit"].astype(str))
     )
-    trace_target = paths.root / "results/ablation_traces.repeat11.inprogress.parquet"
-    summary_target = paths.root / "results/ablation.repeat11.inprogress.parquet"
+    trace_target = paths.root / "results/ablation_traces.repeat12.inprogress.parquet"
+    summary_target = paths.root / "results/ablation.repeat12.inprogress.parquet"
     traces: list[dict[str, object]] = []
     summaries: list[dict[str, object]] = []
     completed: set[str] = set()
@@ -60,7 +60,7 @@ def run() -> str:
         traces = pd.read_parquet(trace_target).to_dict(orient="records")
         summaries = pd.read_parquet(summary_target).to_dict(orient="records")
         completed = {str(row["ablation"]) for row in summaries}
-    prediction_cache: dict[tuple[str, str], tuple[str, str, bool, dict[str, object]]] = {}
+    prediction_cache: dict[tuple[str, str, bool, bool], tuple[str, str, bool, dict[str, object]]] = {}
     shared_retriever_cache: dict[object, object] = {}
     with GpuSemaphore(), PhaseRun("P22", paths) as phase:
         for name, changes in REMOVALS.items():
@@ -71,12 +71,12 @@ def run() -> str:
                 train,
                 controls,
                 ActionLedger(
-                    paths.root / f"artifacts/ablation_{name}_action_ledger_v13.sqlite",
+                    paths.root / f"artifacts/ablation_{name}_action_ledger_v14.sqlite",
                     recovery_authority=configured_recovery_authority(),
                 ),
                 ApprovalAuthority(secrets.token_bytes(32)),
                 risk_service=risk_service,
-                state_dir=paths.root / f"artifacts/ablation_graph_state_v8/{name}",
+                state_dir=paths.root / f"artifacts/ablation_graph_state_v9/{name}",
                 regulations=regulations,
                 require_cuda_retrieval=True,
                 identity_provider=identity_provider,
@@ -89,9 +89,14 @@ def run() -> str:
                 parsed_context = json.loads(context)
                 context_id = str(parsed_context.pop("_context_id"))
                 semantic_context = json.dumps(parsed_context, sort_keys=True)
-                cache_key = (str(row.case_id), semantic_context)
+                cache_key = (str(row.case_id), semantic_context, config.structured_output, config.verifier)
                 if cache_key not in prediction_cache:
-                    prediction_cache[cache_key] = _predict_one(str(row.narrative), context)
+                    prediction_cache[cache_key] = _predict_one(
+                        str(row.narrative),
+                        context,
+                        governed_schema_validation=config.structured_output,
+                        governed_evidence_validation=config.verifier,
+                    )
                 cached_prediction = prediction_cache[cache_key]
                 prediction = (
                     cached_prediction[0],

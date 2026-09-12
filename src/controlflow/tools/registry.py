@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+import queue
 import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from threading import Thread
 from typing import Any, Generic, TypeVar, cast
 
 from pydantic import BaseModel
@@ -135,10 +137,40 @@ class ToolRegistry:
         attempts = 1 if not spec.read_only else spec.max_retries + 1
         for attempt in range(attempts):
             lease = ToolDeadlineLease(time.monotonic() + spec.timeout_seconds)
-            token = bind_tool_deadline(lease)
+            outcome: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=1)
+
+            def run_implementation(
+                current_lease: ToolDeadlineLease = lease,
+                current_outcome: queue.Queue[tuple[str, Any]] = outcome,
+            ) -> None:
+                token = bind_tool_deadline(current_lease)
+                try:
+                    current_outcome.put(("value", spec.implementation(parsed)))
+                except Exception as exc:
+                    current_outcome.put(("error", exc))
+                finally:
+                    reset_tool_deadline(token)
+
+            worker = Thread(target=run_implementation, name=f"controlflow-tool-{name}", daemon=True)
+            worker.start()
             try:
-                value = spec.implementation(parsed)
+                try:
+                    outcome_kind, outcome_value = outcome.get(timeout=spec.timeout_seconds)
+                except queue.Empty as exc:
+                    commit_completed = lease.cancel()
+                    # Cancellation takes the same permit as the irreversible
+                    # commit. It therefore returns promptly for pre-commit
+                    # work, or waits for an already-entered atomic commit and
+                    # then prevents every later commit attempt.
+                    status = "timeout_after_commit_reconciled" if commit_completed else "timeout_precommit_cancelled"
+                    raise ToolDeadlineExpired(status) from exc
+                if outcome_kind == "error":
+                    if isinstance(outcome_value, BaseException):
+                        raise outcome_value
+                    raise RuntimeError("tool worker returned an invalid error payload")
+                value = outcome_value
                 if time.monotonic() >= lease.deadline and not lease.commit_completed:
+                    lease.cancel()
                     raise ToolDeadlineExpired("tool completed after its deadline without committing")
                 output = spec.output_model.model_validate(value)
                 self._audit(
@@ -156,18 +188,22 @@ class ToolRegistry:
                 return cast(BaseModel, output)
             except ToolDeadlineExpired as exc:
                 last_error = exc
+                timeout_status = str(exc)
+                if timeout_status not in {"timeout_precommit_cancelled", "timeout_after_commit_reconciled"}:
+                    timeout_status = "timeout_precommit_cancelled"
                 self._audit(
                     identity,
                     {
                         **base_event,
                         "attempt": attempt + 1,
                         "authorization": authorization.outcome.value,
-                        "status": "timeout_completed_without_detached_worker",
+                        "status": timeout_status,
                         "duration_seconds": time.perf_counter() - started,
                     },
                 )
-                # Execution is synchronous: at return there is no abandoned
-                # worker and therefore no overlapping retry or late mutation.
+                # A timeout is never retried. A pre-commit worker may remain a
+                # quarantined daemon, but its cancelled lease prevents every
+                # governed side-effect commit.
                 break
             except PermissionError:
                 self._audit(
@@ -194,6 +230,4 @@ class ToolRegistry:
                         "duration_seconds": time.perf_counter() - started,
                     },
                 )
-            finally:
-                reset_tool_deadline(token)
         raise RuntimeError(f"tool {name} failed after {attempts} attempts") from last_error

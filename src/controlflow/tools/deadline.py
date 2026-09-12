@@ -20,12 +20,11 @@ class ToolDeadlineLease:
     _commit_completed: bool = False
 
     def cancel(self) -> bool:
-        """Cancel before commit, or report that a serialized commit completed."""
+        """Cancel future commits and report whether one already completed."""
         with self._commit_permit:
-            if self._commit_completed:
-                return False
+            committed = self._commit_completed
             self.cancelled.set()
-            return True
+            return committed
 
     def assert_active(self) -> None:
         if self.cancelled.is_set() or time.monotonic() >= self.deadline:
