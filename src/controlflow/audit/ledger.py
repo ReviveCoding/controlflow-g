@@ -385,7 +385,7 @@ class ActionLedger:
         policy_version: str,
         evidence_hash: str,
     ) -> ActionReceipt:
-        from controlflow.tools.deadline import assert_tool_deadline_active
+        from controlflow.tools.deadline import assert_tool_deadline_active, tool_commit_section
 
         assert_tool_deadline_active()
         self._require_integrity()
@@ -422,7 +422,8 @@ class ActionLedger:
                 actor_id=actor_id,
                 payload_hash=rollback_id,
             )
-            connection.execute("COMMIT")
+            with tool_commit_section():
+                connection.execute("COMMIT")
         self._sync_action_anchor()
         return ActionReceipt(action_id, str(row[0]), "ROLLED_BACK", executed=False)
 
@@ -439,7 +440,7 @@ class ActionLedger:
         policy_version: str = "local-policy-v1",
         evidence_hash: str = "none",
     ) -> ActionReceipt:
-        from controlflow.tools.deadline import assert_tool_deadline_active
+        from controlflow.tools.deadline import assert_tool_deadline_active, tool_commit_section
 
         assert_tool_deadline_active()
         self._require_integrity()
@@ -483,7 +484,8 @@ class ActionLedger:
                         payload_hash=result_hash,
                     )
                     assert_tool_deadline_active()
-                    connection.execute("COMMIT")
+                    with tool_commit_section():
+                        connection.execute("COMMIT")
                     self._sync_action_anchor()
                     return ActionReceipt(row[0], key, "EXECUTED", executed=True)
                 connection.execute("COMMIT")
@@ -515,7 +517,8 @@ class ActionLedger:
                 connection, action_id=action_id, event_type="EXECUTED", actor_id=reviewer_id, payload_hash=result_hash
             )
             assert_tool_deadline_active()
-            connection.execute("COMMIT")
+            with tool_commit_section():
+                connection.execute("COMMIT")
         self._sync_action_anchor()
         return ActionReceipt(action_id, key, "EXECUTED", executed=True)
 

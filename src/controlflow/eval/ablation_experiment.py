@@ -51,8 +51,8 @@ def run() -> str:
     identity_provider, session_credentials = SessionIdentityProvider.issue_for_business_units(
         set(frame["business_unit"].astype(str))
     )
-    trace_target = paths.root / "results/ablation_traces.repeat10.inprogress.parquet"
-    summary_target = paths.root / "results/ablation.repeat10.inprogress.parquet"
+    trace_target = paths.root / "results/ablation_traces.repeat11.inprogress.parquet"
+    summary_target = paths.root / "results/ablation.repeat11.inprogress.parquet"
     traces: list[dict[str, object]] = []
     summaries: list[dict[str, object]] = []
     completed: set[str] = set()
@@ -71,12 +71,12 @@ def run() -> str:
                 train,
                 controls,
                 ActionLedger(
-                    paths.root / f"artifacts/ablation_{name}_action_ledger_v12.sqlite",
+                    paths.root / f"artifacts/ablation_{name}_action_ledger_v13.sqlite",
                     recovery_authority=configured_recovery_authority(),
                 ),
                 ApprovalAuthority(secrets.token_bytes(32)),
                 risk_service=risk_service,
-                state_dir=paths.root / f"artifacts/ablation_graph_state_v7/{name}",
+                state_dir=paths.root / f"artifacts/ablation_graph_state_v8/{name}",
                 regulations=regulations,
                 require_cuda_retrieval=True,
                 identity_provider=identity_provider,
@@ -88,10 +88,7 @@ def run() -> str:
                 context = workflow.context_for_llm(row, config, session_token=session_token)
                 parsed_context = json.loads(context)
                 context_id = str(parsed_context.pop("_context_id"))
-                semantic_context = json.dumps(
-                    {name: parsed_context.get(name, "") for name in ("search_controls", "search_regulations")},
-                    sort_keys=True,
-                )
+                semantic_context = json.dumps(parsed_context, sort_keys=True)
                 cache_key = (str(row.case_id), semantic_context)
                 if cache_key not in prediction_cache:
                     prediction_cache[cache_key] = _predict_one(str(row.narrative), context)

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
-from threading import Event
+from threading import Event, Thread
 
 import numpy as np
 import pandas as pd
@@ -16,6 +16,7 @@ from controlflow.authorization.identity import SessionIdentityProvider
 from controlflow.authorization.policy import LocalPolicyBackend
 from controlflow.hitl.approval import ApprovalAuthority
 from controlflow.schemas import IdentityContext, Severity
+from controlflow.tools.deadline import tool_commit_section
 from controlflow.tools.registry import ToolRegistry, ToolSpec
 
 
@@ -36,7 +37,7 @@ def _sessions(*units: str) -> tuple[SessionIdentityProvider, dict[str, str]]:
 
 
 def test_exact_identifier_is_not_oracle_injected_after_retrieval_miss(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tool_corpus: Path
 ) -> None:
     controls = pd.DataFrame(
         [
@@ -61,6 +62,7 @@ def test_exact_identifier_is_not_oracle_injected_after_retrieval_miss(
         ApprovalAuthority(b"secret"),
         risk_service=FakeRisk(),  # type: ignore[arg-type]
         identity_provider=provider,
+        corpus_root=tool_corpus,
     )
     row = pd.Series(
         {
@@ -78,8 +80,8 @@ def test_exact_identifier_is_not_oracle_injected_after_retrieval_miss(
     assert "AC-2" not in {item.evidence_id for item in evidence}
 
 
-def test_authenticated_identity_is_immutable_when_case_scope_is_tampered(tmp_path: Path) -> None:
-    controls = pd.read_parquet("data/staging/nist_controls_raw.parquet").head(1)
+def test_authenticated_identity_is_immutable_when_case_scope_is_tampered(tmp_path: Path, tool_corpus: Path) -> None:
+    controls = pd.read_parquet(tool_corpus / "data/staging/nist_controls_raw.parquet").head(1)
     training = pd.DataFrame(
         [
             {
@@ -99,6 +101,7 @@ def test_authenticated_identity_is_immutable_when_case_scope_is_tampered(tmp_pat
         ApprovalAuthority(b"secret"),
         risk_service=FakeRisk(),  # type: ignore[arg-type]
         identity_provider=provider,
+        corpus_root=tool_corpus,
     )
     token = credentials["consumer"]
     tampered = training.iloc[0].copy()
@@ -115,8 +118,8 @@ def test_authenticated_identity_is_immutable_when_case_scope_is_tampered(tmp_pat
         )
 
 
-def test_all_read_tool_outputs_enter_llm_context(tmp_path: Path) -> None:
-    controls = pd.read_parquet("data/staging/nist_controls_raw.parquet").head(2)
+def test_all_read_tool_outputs_enter_llm_context(tmp_path: Path, tool_corpus: Path) -> None:
+    controls = pd.read_parquet(tool_corpus / "data/staging/nist_controls_raw.parquet").head(2)
     training = pd.DataFrame(
         [
             {
@@ -136,6 +139,7 @@ def test_all_read_tool_outputs_enter_llm_context(tmp_path: Path) -> None:
         ApprovalAuthority(b"secret"),
         risk_service=FakeRisk(),  # type: ignore[arg-type]
         identity_provider=provider,
+        corpus_root=tool_corpus,
     )
     row = training.iloc[0].copy()
     row["case_id"] = "current"
@@ -156,8 +160,8 @@ def test_all_read_tool_outputs_enter_llm_context(tmp_path: Path) -> None:
     assert context["query_case_data"]["values"]["case_id"] == "current"
 
 
-def test_agentic_context_executes_only_selected_tools(tmp_path: Path) -> None:
-    controls = pd.read_parquet("data/staging/nist_controls_raw.parquet").head(2)
+def test_agentic_context_executes_only_selected_tools(tmp_path: Path, tool_corpus: Path) -> None:
+    controls = pd.read_parquet(tool_corpus / "data/staging/nist_controls_raw.parquet").head(2)
     training = pd.DataFrame(
         [
             {
@@ -177,6 +181,7 @@ def test_agentic_context_executes_only_selected_tools(tmp_path: Path) -> None:
         ApprovalAuthority(b"secret"),
         risk_service=FakeRisk(),  # type: ignore[arg-type]
         identity_provider=provider,
+        corpus_root=tool_corpus,
     )
     row = training.iloc[0].copy()
     row["case_id"] = "current"
@@ -210,8 +215,8 @@ def test_agentic_context_executes_only_selected_tools(tmp_path: Path) -> None:
     assert "query_transactions" not in context
 
 
-def test_duplicate_plan_is_rejected_before_any_tool_executes(tmp_path: Path) -> None:
-    controls = pd.read_parquet("data/staging/nist_controls_raw.parquet").head(1)
+def test_duplicate_plan_is_rejected_before_any_tool_executes(tmp_path: Path, tool_corpus: Path) -> None:
+    controls = pd.read_parquet(tool_corpus / "data/staging/nist_controls_raw.parquet").head(1)
     row = pd.Series(
         {
             "case_id": "case",
@@ -233,6 +238,7 @@ def test_duplicate_plan_is_rejected_before_any_tool_executes(tmp_path: Path) -> 
         ApprovalAuthority(b"secret"),
         risk_service=FakeRisk(),  # type: ignore[arg-type]
         identity_provider=provider,
+        corpus_root=tool_corpus,
     )
     context = json.loads(
         workflow.context_for_llm(
@@ -259,8 +265,8 @@ def test_duplicate_plan_is_rejected_before_any_tool_executes(tmp_path: Path) -> 
     assert malformed["tool_steps"] == []
 
 
-def test_case_scoped_context_rejects_wrong_case_argument(tmp_path: Path) -> None:
-    controls = pd.read_parquet("data/staging/nist_controls_raw.parquet").head(1)
+def test_case_scoped_context_rejects_wrong_case_argument(tmp_path: Path, tool_corpus: Path) -> None:
+    controls = pd.read_parquet(tool_corpus / "data/staging/nist_controls_raw.parquet").head(1)
     training = pd.DataFrame(
         [{"case_id": "case", "entity_id": "entity", "business_unit": "consumer", "narrative": "exception"}]
     )
@@ -272,6 +278,7 @@ def test_case_scoped_context_rejects_wrong_case_argument(tmp_path: Path) -> None
         ApprovalAuthority(b"secret"),
         risk_service=FakeRisk(),  # type: ignore[arg-type]
         identity_provider=provider,
+        corpus_root=tool_corpus,
     )
     row = training.iloc[0].copy()
     row["event_timestamp"] = pd.Timestamp("2025-01-01", tz="UTC")
@@ -289,8 +296,10 @@ def test_case_scoped_context_rejects_wrong_case_argument(tmp_path: Path) -> None
     assert context["query_case_data"] == {"error": "argument_or_authorization_rejected"}
 
 
-def test_replayed_action_trace_reports_achieved_state_without_duplicate_side_effect(tmp_path: Path) -> None:
-    controls = pd.read_parquet("data/staging/nist_controls_raw.parquet").head(1)
+def test_replayed_action_trace_reports_achieved_state_without_duplicate_side_effect(
+    tmp_path: Path, tool_corpus: Path
+) -> None:
+    controls = pd.read_parquet(tool_corpus / "data/staging/nist_controls_raw.parquet").head(1)
     row = pd.Series(
         {
             "case_id": "case",
@@ -312,6 +321,7 @@ def test_replayed_action_trace_reports_achieved_state_without_duplicate_side_eff
         ApprovalAuthority(b"secret"),
         risk_service=FakeRisk(),  # type: ignore[arg-type]
         identity_provider=provider,
+        corpus_root=tool_corpus,
     )
     config = WorkflowConfig(retrieval=False, ml_risk=False, anomaly=False, verifier=False, hitl=False)
     token = credentials["consumer"]
@@ -363,7 +373,7 @@ def test_denied_or_malformed_tool_never_executes_implementation() -> None:
 
 def test_tool_timeout_returns_within_declared_wall_clock() -> None:
     def implementation(value: Probe) -> Probe:
-        Event().wait()
+        Event().wait(0.03)
         return value
 
     registry = ToolRegistry(LocalPolicyBackend())
@@ -401,7 +411,9 @@ def test_tool_timeout_returns_within_declared_wall_clock() -> None:
             data_classification=0,
             severity=Severity.LOW,
         )
-    assert time.perf_counter() - started < 0.2
+    elapsed = time.perf_counter() - started
+    assert 0.03 <= elapsed < 0.2
+    assert registry.audit_events[-1]["status"] == "timeout_completed_without_detached_worker"
 
 
 def test_timed_out_write_cannot_commit_later(tmp_path: Path) -> None:
@@ -472,8 +484,74 @@ def test_timed_out_write_cannot_commit_later(tmp_path: Path) -> None:
         assert connection.execute("SELECT COUNT(*) FROM action_ledger").fetchone()[0] == 0
 
 
-def test_context_id_is_bound_to_exact_ordered_tool_arguments(tmp_path: Path) -> None:
-    controls = pd.read_parquet("data/staging/nist_controls_raw.parquet").head(1)
+def test_timeout_racing_entered_commit_waits_and_reconciles() -> None:
+    entered = Event()
+    release = Event()
+    caller_done = Event()
+    committed: list[int] = []
+    returned: list[Probe] = []
+
+    def implementation(value: Probe) -> Probe:
+        with tool_commit_section():
+            entered.set()
+            release.wait(timeout=1)
+            committed.append(value.value)
+        return value
+
+    registry = ToolRegistry(LocalPolicyBackend())
+    registry.register(
+        ToolSpec(
+            "commit_race",
+            Probe,
+            Probe,
+            1,
+            False,
+            frozenset({"Control Analyst"}),
+            frozenset({"consumer"}),
+            False,
+            0.01,
+            0,
+            implementation,
+        )
+    )
+    identity = IdentityContext(
+        user_id="analyst",
+        role="Control Analyst",
+        business_unit="consumer",
+        region="US",
+        clearance=1,
+        purpose="investigation",
+        session_id="session",
+    )
+
+    def invoke() -> None:
+        returned.append(
+            registry.invoke(
+                "commit_race",
+                {"value": 7},
+                identity=identity,
+                scope="consumer",
+                data_classification=0,
+                severity=Severity.LOW,
+            )  # type: ignore[arg-type]
+        )
+        caller_done.set()
+
+    caller = Thread(target=invoke)
+    caller.start()
+    assert entered.wait(timeout=1)
+    time.sleep(0.03)
+    assert not caller_done.is_set()
+    release.set()
+    caller.join(timeout=1)
+    assert not caller.is_alive()
+    assert committed == [7]
+    assert returned == [Probe(value=7)]
+    assert registry.audit_events[-1]["status"] == "success"
+
+
+def test_context_id_is_bound_to_exact_ordered_tool_arguments(tmp_path: Path, tool_corpus: Path) -> None:
+    controls = pd.read_parquet(tool_corpus / "data/staging/nist_controls_raw.parquet").head(1)
     row = pd.Series(
         {
             "case_id": "case",
@@ -495,6 +573,7 @@ def test_context_id_is_bound_to_exact_ordered_tool_arguments(tmp_path: Path) -> 
         ApprovalAuthority(b"secret"),
         risk_service=FakeRisk(),  # type: ignore[arg-type]
         identity_provider=provider,
+        corpus_root=tool_corpus,
     )
     context = json.loads(
         workflow.context_for_llm(
@@ -511,6 +590,35 @@ def test_context_id_is_bound_to_exact_ordered_tool_arguments(tmp_path: Path) -> 
             ("LOW", "AUTO", True),
             ["query_case_data"],
             [{"case_id": "different"}],
+            session_token=credentials["consumer"],
+            context_id=context["_context_id"],
+        )
+    with pytest.raises(PermissionError, match="not issued"):
+        workflow.execute(
+            row,
+            WorkflowConfig(retrieval=False),
+            ("LOW", "AUTO", True),
+            ["query_case_data"],
+            [{"case_id": "case"}],
+            session_token=credentials["consumer"],
+            context_id="never-issued",
+        )
+    workflow.execute(
+        row,
+        WorkflowConfig(retrieval=False),
+        ("LOW", "AUTO", True),
+        ["query_case_data"],
+        [{"case_id": "case"}],
+        session_token=credentials["consumer"],
+        context_id=context["_context_id"],
+    )
+    with pytest.raises(PermissionError, match="not issued"):
+        workflow.execute(
+            row,
+            WorkflowConfig(retrieval=False),
+            ("LOW", "AUTO", True),
+            ["query_case_data"],
+            [{"case_id": "case"}],
             session_token=credentials["consumer"],
             context_id=context["_context_id"],
         )

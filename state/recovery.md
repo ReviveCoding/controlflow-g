@@ -24,3 +24,16 @@
 - P16/P17 were regenerated (560 unique traces), P19 was regenerated (15/15 attacks blocked), P20 was regenerated (12/12 recoveries), P22 was regenerated (1,200 unique traces), and P23/business/HITL artifacts were regenerated.
 - Validation AG6: STC `0.10`, nominal task success `0.1375`, 80/80 structured analyses valid after bounded normalization, and system tool-argument accuracy `1.0`.
 - Full checks: Ruff pass, strict mypy pass (74 source files), pytest 66 passed, sdist/wheel build pass, artifact manifest verification returned no mismatches.
+
+## 2026-09-12 repeat-11 pre-final repair
+
+- Final holdout remains sealed (`sealed_test_consumed=false`); P25/P26 were not invoked.
+- Repeat-11 correctness, methodology, and security BLOCKER/HIGH findings were all classified `VALID`; see `reports/reviews/p24_repeat11_dispositions.md`.
+- Governed LLM analysis now requires an exact typed schema and citations restricted to authorized retrieved evidence; every parse/schema/support failure is fail-closed as `INSUFFICIENT_EVIDENCE`.
+- Validation AG6 now records the adverse result honestly: STC `0.0`, nominal task success `0.1375`, and 0/80 strict analyses valid/supported.
+- P22 cache identity covers the complete visible governed context, and tool-argument accuracy includes rejected/failed authoritative attempts.
+- P26 has a run-wide interprocess owner lock; invocation contexts are single-use and unknown identifiers fail closed.
+- Detached timeout workers were removed. Tool calls are synchronous under cooperative deadlines, and action/rollback commits use the deadline commit permit.
+- Tests use an injected temporary corpus root and do not bootstrap canonical repository artifacts.
+- P19 regenerated with 15/15 programmed attacks blocked, P20 with 12/12 injected failures recovered and no duplicate execution, P22 with 15 configurations and 1,200 unique traces, followed by P21/P23 regeneration.
+- Artifact registration and exact clean-export validation are required before repeat-12 review.

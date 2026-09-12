@@ -5,8 +5,6 @@ import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from queue import Empty, Queue
-from threading import Thread
 from typing import Any, Generic, TypeVar, cast
 
 from pydantic import BaseModel
@@ -14,7 +12,12 @@ from pydantic import BaseModel
 from controlflow.authorization.policy import LocalPolicyBackend, ToolPolicyInput
 from controlflow.core.state import canonical_json
 from controlflow.schemas import AuthorizationOutcome, IdentityContext, Severity
-from controlflow.tools.deadline import ToolDeadlineLease, bind_tool_deadline, reset_tool_deadline
+from controlflow.tools.deadline import (
+    ToolDeadlineExpired,
+    ToolDeadlineLease,
+    bind_tool_deadline,
+    reset_tool_deadline,
+)
 
 InputT = TypeVar("InputT", bound=BaseModel)
 OutputT = TypeVar("OutputT", bound=BaseModel)
@@ -131,33 +134,12 @@ class ToolRegistry:
         last_error: Exception | None = None
         attempts = 1 if not spec.read_only else spec.max_retries + 1
         for attempt in range(attempts):
-            outcome: Queue[tuple[bool, object]] = Queue(maxsize=1)
             lease = ToolDeadlineLease(time.monotonic() + spec.timeout_seconds)
-
-            def run_tool(
-                result_queue: Queue[tuple[bool, object]] = outcome,
-                implementation: Callable[[BaseModel], BaseModel] = spec.implementation,
-                input_value: BaseModel = parsed,
-                deadline_lease: ToolDeadlineLease = lease,
-            ) -> None:
-                token = bind_tool_deadline(deadline_lease)
-                try:
-                    result_queue.put((True, implementation(input_value)))
-                except BaseException as exc:  # propagated on the invoking thread
-                    result_queue.put((False, exc))
-                finally:
-                    reset_tool_deadline(token)
-
-            # A daemon worker makes the deadline enforceable for the caller and
-            # process lifecycle. Implementations are bounded, typed local tools;
-            # write implementations additionally rely on the idempotent ledger.
-            Thread(target=run_tool, name=f"tool-{name}", daemon=True).start()
+            token = bind_tool_deadline(lease)
             try:
-                succeeded, value = outcome.get(timeout=spec.timeout_seconds)
-                if not succeeded:
-                    if isinstance(value, BaseException):
-                        raise value
-                    raise RuntimeError("tool worker returned an invalid failure")
+                value = spec.implementation(parsed)
+                if time.monotonic() >= lease.deadline and not lease.commit_completed:
+                    raise ToolDeadlineExpired("tool completed after its deadline without committing")
                 output = spec.output_model.model_validate(value)
                 self._audit(
                     identity,
@@ -172,8 +154,7 @@ class ToolRegistry:
                     },
                 )
                 return cast(BaseModel, output)
-            except Empty as exc:
-                lease.cancel()
+            except ToolDeadlineExpired as exc:
                 last_error = exc
                 self._audit(
                     identity,
@@ -181,13 +162,12 @@ class ToolRegistry:
                         **base_event,
                         "attempt": attempt + 1,
                         "authorization": authorization.outcome.value,
-                        "status": "timeout_indeterminate",
+                        "status": "timeout_completed_without_detached_worker",
                         "duration_seconds": time.perf_counter() - started,
                     },
                 )
-                # A timed-out attempt is never overlapped by a retry. Read
-                # calls abort this invocation; write commits recheck the lease
-                # inside the only permitted action ledger boundary.
+                # Execution is synchronous: at return there is no abandoned
+                # worker and therefore no overlapping retry or late mutation.
                 break
             except PermissionError:
                 self._audit(
@@ -214,4 +194,6 @@ class ToolRegistry:
                         "duration_seconds": time.perf_counter() - started,
                     },
                 )
+            finally:
+                reset_tool_deadline(token)
         raise RuntimeError(f"tool {name} failed after {attempts} attempts") from last_error

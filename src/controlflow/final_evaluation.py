@@ -11,6 +11,7 @@ import joblib
 import pandas as pd
 import pyarrow.parquet as pq
 import torch
+from filelock import FileLock, Timeout
 from pydantic import BaseModel, ConfigDict, Field
 
 from controlflow.agents.experiments import (
@@ -76,14 +77,16 @@ class FinalCheckpointTrace(BaseModel):
     llm_requested_arguments: str
     tool_argument_errors: int = Field(ge=0)
     executed_tool_steps: str
+    attempted_tool_steps: str
     tool_argument_accuracy: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
     llm_plan_argument_accuracy: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
     llm_analysis_hash: str
     llm_analysis_valid: bool
+    llm_analysis_supported: bool
     correct_tool_request: bool
 
 
-def run_final_once() -> str:
+def _run_final_once_locked() -> str:
     paths = ProjectPaths.discover()
     freeze = verify_freeze(paths)
     # Schema metadata is safe to validate before consuming the one-shot seal:
@@ -164,12 +167,12 @@ def run_final_once() -> str:
             development,
             controls,
             ActionLedger(
-                paths.root / f"artifacts/final_{name}_action_ledger_v10.sqlite",
+                paths.root / f"artifacts/final_{name}_action_ledger_v11.sqlite",
                 recovery_authority=configured_recovery_authority(),
             ),
             ApprovalAuthority(secrets.token_bytes(32)),
             risk_service=frozen_risk,
-            state_dir=paths.root / f"artifacts/final_graph_state_v5/{name}",
+            state_dir=paths.root / f"artifacts/final_graph_state_v6/{name}",
             regulations=regulations,
             require_cuda_retrieval=True,
             identity_provider=identity_provider,
@@ -467,6 +470,40 @@ def run_final_once() -> str:
     complete_final_run(paths, str(final_run["run_id"]), sha256_file(target))
     verify_final_run_outputs(paths)
     return str(target)
+
+
+def run_final_once() -> str:
+    paths = ProjectPaths.discover()
+    lock = FileLock(str(paths.state / "final-run-owner.lock"))
+    try:
+        with lock.acquire(timeout=0):
+            owner_path = paths.state / "final-run-owner.json"
+            prior_owner = json.loads(owner_path.read_text(encoding="utf-8")) if owner_path.exists() else None
+            owner_token = secrets.token_hex(32)
+            atomic_write_json(
+                owner_path,
+                {
+                    "owner_token_sha256": hashlib.sha256(owner_token.encode()).hexdigest(),
+                    "process_id": os.getpid(),
+                    "status": "active",
+                    "acquired_at": utc_now(),
+                    "takeover_of": prior_owner,
+                },
+            )
+            try:
+                return _run_final_once_locked()
+            finally:
+                atomic_write_json(
+                    owner_path,
+                    {
+                        "owner_token_sha256": hashlib.sha256(owner_token.encode()).hexdigest(),
+                        "process_id": os.getpid(),
+                        "status": "released",
+                        "released_at": utc_now(),
+                    },
+                )
+    except Timeout as error:
+        raise RuntimeError("another final evaluation owner is active") from error
 
 
 if __name__ == "__main__":

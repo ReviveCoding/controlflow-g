@@ -3,9 +3,11 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from threading import Event, Thread
 
 import pytest
 
+from controlflow import final_evaluation
 from controlflow.audit.final_attestation import (
     FinalRunAttestor,
     load_verified_final_artifacts,
@@ -129,3 +131,26 @@ def test_progress_chain_rejects_divergent_signed_orphan(tmp_path: Path, monkeypa
     )
     with pytest.raises(RuntimeError, match="chain validation"):
         attestor.read_progress("run", "freeze")
+
+
+def test_final_evaluation_rejects_live_duplicate_owner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "state").mkdir()
+    entered = Event()
+    release = Event()
+    completed: list[str] = []
+
+    def held_run() -> str:
+        entered.set()
+        release.wait(2)
+        return "complete"
+
+    monkeypatch.setattr(final_evaluation.ProjectPaths, "discover", lambda: ProjectPaths(tmp_path))
+    monkeypatch.setattr(final_evaluation, "_run_final_once_locked", held_run)
+    owner = Thread(target=lambda: completed.append(final_evaluation.run_final_once()))
+    owner.start()
+    assert entered.wait(1)
+    with pytest.raises(RuntimeError, match="another final evaluation owner"):
+        final_evaluation.run_final_once()
+    release.set()
+    owner.join(2)
+    assert completed == ["complete"]

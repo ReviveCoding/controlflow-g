@@ -182,8 +182,10 @@ class WorkflowTrace:
     retry_count: int = 0
     tool_argument_errors: int = 0
     executed_tool_steps: list[dict[str, object]] = field(default_factory=list)
+    attempted_tool_steps: list[dict[str, object]] = field(default_factory=list)
     llm_analysis_hash: str = "none"
     llm_analysis_valid: bool = True
+    llm_analysis_supported: bool = False
 
 
 class GovernedWorkflow:
@@ -199,6 +201,7 @@ class GovernedWorkflow:
         require_cuda_retrieval: bool = False,
         identity_provider: SessionIdentityProvider | None = None,
         verified_corpus_hashes: dict[str, str] | None = None,
+        corpus_root: Path | None = None,
     ) -> None:
         self.risk = risk_service or RiskService(training)
         self.controls = controls
@@ -212,14 +215,15 @@ class GovernedWorkflow:
             raise ValueError("an independently provisioned identity provider is required")
         self.identity_provider = identity_provider
         paths = ProjectPaths.discover()
+        source_root = corpus_root or paths.root
         if verified_corpus_hashes is None:
-            artifact_manifest = json.loads((paths.state / "artifact_manifest.json").read_text(encoding="utf-8"))
+            artifact_manifest = json.loads((source_root / "state/artifact_manifest.json").read_text(encoding="utf-8"))
             recorded_hashes = {item["path"]: item["sha256"] for item in artifact_manifest["artifacts"]}
         else:
             recorded_hashes = verified_corpus_hashes
-        control_path = paths.root / "data/staging/nist_controls_raw.parquet"
-        regulation_path = paths.root / "data/staging/cfr_raw.parquet"
-        transaction_path = paths.root / "data/staging/transactions_raw.parquet"
+        control_path = source_root / "data/staging/nist_controls_raw.parquet"
+        regulation_path = source_root / "data/staging/cfr_raw.parquet"
+        transaction_path = source_root / "data/staging/transactions_raw.parquet"
         controls_trusted = recorded_hashes.get("data/staging/nist_controls_raw.parquet") == sha256_file(
             control_path
         ) and controls.reset_index(drop=True).equals(pd.read_parquet(control_path).reset_index(drop=True))
@@ -785,6 +789,8 @@ class GovernedWorkflow:
         else:
             cache_key = (str(row.case_id), session_token, context_id)
         cached_plan = self._context_plans.get(cache_key)
+        if context_id is not None and cached_plan is None:
+            raise PermissionError("context ID was not issued for this case and authenticated session")
         submitted_plan = list(zip(llm_tool_requests or [], llm_tool_arguments or [], strict=False))
         if (
             llm_tool_requests is not None
@@ -1256,6 +1262,15 @@ class GovernedWorkflow:
         )
         root_cause = str(analysis.get("root_cause_hypothesis", "control execution variance"))[:500]
         bounded_recommendation = str(analysis.get("recommended_action", "INVESTIGATE"))
+        analysis_evidence_ids = [str(value) for value in analysis.get("supporting_evidence_ids", [])]
+        analysis_supported = bool(analysis_evidence_ids) and set(analysis_evidence_ids).issubset(
+            {item.evidence_id for item in evidence}
+        )
+        if analysis.get("architecture_mode") == "governed":
+            analysis_valid = analysis_valid and analysis_supported
+            if not analysis_valid:
+                root_cause = "LLM analysis omitted because schema or evidence validation failed"
+                bounded_recommendation = "REQUEST_EVIDENCE"
         analysis_hash = hashlib.sha256(canonical_json(analysis)).hexdigest() if analysis else "none"
         if config.structured_output:
             try:
@@ -1421,6 +1436,15 @@ class GovernedWorkflow:
         self._context_evidence.pop(cache_key, None)
         self._context_attempted_tools.pop(cache_key, None)
         authoritative_plan = self._context_plans.pop(cache_key, cached_plan or submitted_plan)
+        attempted_tool_steps: list[dict[str, object]] = [
+            {
+                "step_id": index,
+                "tool_name": name,
+                "tool_arguments": arguments,
+                "status": "success" if name in tool_calls else "failed_or_not_executed",
+            }
+            for index, (name, arguments) in enumerate(authoritative_plan)
+        ]
         executed_tool_steps = [
             {"step_id": index, "tool_name": name, "tool_arguments": arguments}
             for index, (name, arguments) in enumerate(authoritative_plan)
@@ -1449,6 +1473,8 @@ class GovernedWorkflow:
             context_gpu_seconds=context_gpu_seconds,
             tool_argument_errors=tool_argument_errors,
             executed_tool_steps=executed_tool_steps,
+            attempted_tool_steps=attempted_tool_steps,
             llm_analysis_hash=analysis_hash,
             llm_analysis_valid=analysis_valid,
+            llm_analysis_supported=analysis_supported,
         )
