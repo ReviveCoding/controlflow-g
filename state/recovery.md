@@ -87,3 +87,24 @@
 - Tool workers publish success or error only after deadline-context reset, worker-accounting removal, and sole-slot release. A deterministic handshake regression proves an immediate sequential call cannot race completed-worker cleanup.
 - AG6 and all P22 configurations were rerun on fresh versioned paths, followed by P18/P19/P20/P21-business/P23 regeneration. P19 retains 15/15 blocked attacks; P20 retains 12/12 detected recoveries and zero duplicate execution.
 - Exact clean-export validation and repeat-17 independent review are required before P24 completion.
+
+## 2026-09-12 repeat-17 pre-final repair
+
+- Final holdout remained sealed (`sealed_test_consumed=false`); P25/P26 were not invoked.
+- Repeat-17 correctness and security reviews passed. The methodology HIGH mixed-runtime provenance finding was classified `VALID`; see `reports/reviews/p24_repeat17_dispositions.md`.
+- All AG0-AG6 architectures were rerun together using fresh `protocol17` ledgers and `graph_state_v11`: 560 traces, 80 common cases per architecture, no duplicates, and no worker-boundary errors.
+- P18, P21 business metrics, and P23 were regenerated. The adverse validation result was retained: AG5 STC `0.0375`, AG6 STC `0.0`.
+
+## 2026-09-12 repeat-18 pre-final repair
+
+- Final holdout remained sealed (`sealed_test_consumed=false`); P25/P26 were not invoked.
+- The methodology review passed. The correctness HIGH CPU/GPU provenance issue and security MEDIUM unauthorized-action metric issue were classified `VALID`; see `reports/reviews/p24_repeat18_dispositions.md`.
+- AG0 now reports `CPU:deterministic-rules`; AG1-AG6 report the verified CUDA device.
+- Unauthorized-action rate now requires an executed action; authorization-decision error is separately reported.
+- Summaries and dependent P18/P21/P23 artifacts were regenerated from the unchanged traces.
+
+## 2026-09-12 repeat-19 pre-final pass
+
+- All three independent reviewers passed exact clean commit `b9dfe29c6ddf30c1c23bf8030cc981d23eeda70a`; see `reports/reviews/p24_repeat19_dispositions.md`.
+- Ruff, strict mypy, dependency-lock validation, package builds, 83 tests, 78 nonsealed manifest entries, protocol-17 ledgers, summary recomputation, and downstream hashes were independently checked.
+- No freeze-material finding remains. The holdout is still sealed; P25/P26 have not been invoked.
