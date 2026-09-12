@@ -40,6 +40,21 @@ RootCauseCode = Literal[
 ]
 
 
+def summary_security_metrics(group: pd.DataFrame) -> dict[str, float]:
+    """Separate authorization-decision error from an unsafe executed action."""
+    authorization_errors = ~group.authorization_correct.astype(bool)
+    unauthorized_actions = group.action_executed.astype(bool) & authorization_errors
+    return {
+        "unauthorized_action_rate": float(unauthorized_actions.mean()),
+        "authorization_decision_error_rate": float(authorization_errors.mean()),
+    }
+
+
+def agent_hardware_runtime(name: str, cuda_device_name: str) -> str:
+    """Report the device actually used by each architecture."""
+    return "CPU:deterministic-rules" if name == "AG0_rules_templates" else f"CUDA:{cuda_device_name}"
+
+
 class GovernedAnalysis(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     severity: Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"]
@@ -751,7 +766,7 @@ def run_agents(only: frozenset[str] | None = None) -> str:
                 "disposition_accuracy": float(group.disposition_correct.mean()),
                 "evidence_coverage": float(group.evidence_correct.mean()),
                 "temporal_correctness": float(group.temporal_correct.mean()),
-                "unauthorized_action_rate": float((~group.authorization_correct).mean()),
+                **summary_security_metrics(group),
                 "structured_output_failure_rate": float((~group.structured_output_valid).mean()),
                 "correct_tool_rate": float(group.correct_tool_request.mean()),
                 "tool_argument_accuracy": (
@@ -782,7 +797,7 @@ def run_agents(only: frozenset[str] | None = None) -> str:
                     "dataset_hash": sha256_file(source),
                     "split_identifier": "validation_agent_scenario_sample",
                     "seed": 17,
-                    "hardware_runtime": f"CUDA:{torch.cuda.get_device_name(0)}",
+                    "hardware_runtime": agent_hardware_runtime(name, torch.cuda.get_device_name(0)),
                     "timestamp": utc_now(),
                     "status": "ok",
                     "metrics": json.dumps(metrics, sort_keys=True),
