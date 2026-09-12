@@ -509,7 +509,7 @@ def test_timeout_racing_entered_commit_waits_and_reconciles() -> None:
             frozenset({"Control Analyst"}),
             frozenset({"consumer"}),
             False,
-            0.01,
+            0.2,
             0,
             implementation,
         )
@@ -540,7 +540,9 @@ def test_timeout_racing_entered_commit_waits_and_reconciles() -> None:
     caller = Thread(target=invoke)
     caller.start()
     assert entered.wait(timeout=1)
-    time.sleep(0.03)
+    # Leave ample time for a cold Windows test worker to enter the commit
+    # section, then hold it beyond the declared deadline deterministically.
+    time.sleep(0.25)
     assert not caller_done.is_set()
     release.set()
     caller.join(timeout=1)

@@ -37,3 +37,4 @@
 - Tests use an injected temporary corpus root and do not bootstrap canonical repository artifacts.
 - P19 regenerated with 15/15 programmed attacks blocked, P20 with 12/12 injected failures recovered and no duplicate execution, P22 with 15 configurations and 1,200 unique traces, followed by P21/P23 regeneration.
 - Artifact registration and exact clean-export validation are required before repeat-12 review.
+- The first exact export exposed a scheduler-sensitive commit-race test setup; its pre-commit window was made deterministic and passed five consecutive runs without changing runtime behavior.

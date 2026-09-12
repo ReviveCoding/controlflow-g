@@ -23,6 +23,12 @@ invariants satisfied. P20 regenerated with all 12 injected failures recovered
 and no duplicate execution. P21 and P23 were regenerated after P22. These are
 validation results, not final-test outcomes.
 
+The first exact-export test exposed a scheduler-sensitive 10 ms setup window in
+the commit-race regression. The runtime was unchanged: the test now allows a
+200 ms pre-commit window and deliberately holds the commit beyond it. Five
+independent repetitions pass; the distinct delayed-write rejection test keeps
+its 10 ms deadline.
+
 All changes remain pre-freeze. `sealed_test_consumed` is false, P25/P26 have
 not been invoked, and no locked final IDs, rows, statistics, or outcomes were
 opened during remediation.
