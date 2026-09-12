@@ -4,8 +4,9 @@ import hashlib
 import re
 import time
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from dataclasses import dataclass
+from queue import Empty, Queue
+from threading import Thread
 from typing import Any, Generic, TypeVar, cast
 
 from pydantic import BaseModel
@@ -129,10 +130,29 @@ class ToolRegistry:
         last_error: Exception | None = None
         attempts = 1 if not spec.read_only else spec.max_retries + 1
         for attempt in range(attempts):
-            executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"tool-{name}")
-            future = executor.submit(spec.implementation, parsed)
+            outcome: Queue[tuple[bool, object]] = Queue(maxsize=1)
+
+            def run_tool(
+                result_queue: Queue[tuple[bool, object]] = outcome,
+                implementation: Callable[[BaseModel], BaseModel] = spec.implementation,
+                input_value: BaseModel = parsed,
+            ) -> None:
+                try:
+                    result_queue.put((True, implementation(input_value)))
+                except BaseException as exc:  # propagated on the invoking thread
+                    result_queue.put((False, exc))
+
+            # A daemon worker makes the deadline enforceable for the caller and
+            # process lifecycle. Implementations are bounded, typed local tools;
+            # write implementations additionally rely on the idempotent ledger.
+            Thread(target=run_tool, name=f"tool-{name}", daemon=True).start()
             try:
-                output = spec.output_model.model_validate(future.result(timeout=spec.timeout_seconds))
+                succeeded, value = outcome.get(timeout=spec.timeout_seconds)
+                if not succeeded:
+                    if isinstance(value, BaseException):
+                        raise value
+                    raise RuntimeError("tool worker returned an invalid failure")
+                output = spec.output_model.model_validate(value)
                 self._audit(
                     identity,
                     {
@@ -145,10 +165,8 @@ class ToolRegistry:
                         "duration_seconds": time.perf_counter() - started,
                     },
                 )
-                executor.shutdown(wait=True, cancel_futures=True)
                 return cast(BaseModel, output)
-            except TimeoutError as exc:
-                future.cancel()
+            except Empty as exc:
                 last_error = exc
                 self._audit(
                     identity,
@@ -171,7 +189,6 @@ class ToolRegistry:
                         "duration_seconds": time.perf_counter() - started,
                     },
                 )
-                executor.shutdown(wait=True, cancel_futures=True)
                 raise
             except Exception as exc:
                 last_error = exc
@@ -186,8 +203,4 @@ class ToolRegistry:
                         "duration_seconds": time.perf_counter() - started,
                     },
                 )
-            finally:
-                # Threads cannot be forcibly cancelled. Waiting prevents
-                # overlap before a read-only retry; writes are never retried.
-                executor.shutdown(wait=True, cancel_futures=True)
         raise RuntimeError(f"tool {name} failed after {attempts} attempts") from last_error

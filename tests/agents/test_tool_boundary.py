@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
+from threading import Event
 
 import numpy as np
 import pandas as pd
@@ -191,19 +193,70 @@ def test_agentic_context_executes_only_selected_tools(tmp_path: Path) -> None:
             selected_tools=frozenset({"query_case_data"}),
         )
     )
-    assert set(context) == {
+    assert {
         "search_controls",
         "search_regulations",
         "compute_risk",
         "compute_anomaly",
         "query_case_data",
-    }
+        "tool_steps",
+        "_context_id",
+    }.issubset(context)
     assert context["search_controls"] == []
     assert context["search_regulations"] == []
     assert context["compute_risk"] == {}
     assert context["compute_anomaly"] == {}
     assert context["query_case_data"]["values"]["case_id"] == "current"
     assert "query_transactions" not in context
+
+
+def test_duplicate_plan_is_rejected_before_any_tool_executes(tmp_path: Path) -> None:
+    controls = pd.read_parquet("data/staging/nist_controls_raw.parquet").head(1)
+    row = pd.Series(
+        {
+            "case_id": "case",
+            "entity_id": "entity",
+            "business_unit": "consumer",
+            "narrative": "exception",
+            "event_timestamp": pd.Timestamp("2025-01-01", tz="UTC"),
+            "pit_historical_failures": 0,
+            "future_failures": 0,
+            "repeat_count": 0,
+            "data_sensitivity": 0,
+        }
+    )
+    provider, credentials = _sessions("consumer")
+    workflow = GovernedWorkflow(
+        pd.DataFrame([row]),
+        controls,
+        ActionLedger(tmp_path / "duplicates.sqlite"),
+        ApprovalAuthority(b"secret"),
+        risk_service=FakeRisk(),  # type: ignore[arg-type]
+        identity_provider=provider,
+    )
+    context = json.loads(
+        workflow.context_for_llm(
+            row,
+            WorkflowConfig(reranker=False),
+            session_token=credentials["consumer"],
+            selected_tool_calls=[
+                ("query_case_data", {"case_id": "case"}),
+                ("query_case_data", {"case_id": "case"}),
+            ],
+        )
+    )
+    assert context["plan"]["error"] == "duplicate_tool_request_rejected_before_execution"
+    assert context["tool_steps"] == []
+    malformed = json.loads(
+        workflow.context_for_llm(
+            row,
+            WorkflowConfig(reranker=False),
+            session_token=credentials["consumer"],
+            selected_tool_calls=[("query_case_data", {"__invalid__": True})],
+        )
+    )
+    assert malformed["plan"]["error"] == "malformed_tool_plan_rejected_before_execution"
+    assert malformed["tool_steps"] == []
 
 
 def test_case_scoped_context_rejects_wrong_case_argument(tmp_path: Path) -> None:
@@ -306,3 +359,46 @@ def test_denied_or_malformed_tool_never_executes_implementation() -> None:
             "probe", {"bad": 1}, identity=identity, scope="consumer", data_classification=0, severity=Severity.LOW
         )
     assert not called
+
+
+def test_tool_timeout_returns_within_declared_wall_clock() -> None:
+    def implementation(value: Probe) -> Probe:
+        Event().wait()
+        return value
+
+    registry = ToolRegistry(LocalPolicyBackend())
+    registry.register(
+        ToolSpec(
+            "slow_probe",
+            Probe,
+            Probe,
+            0,
+            True,
+            frozenset({"Control Analyst"}),
+            frozenset({"consumer"}),
+            False,
+            0.02,
+            0,
+            implementation,
+        )
+    )
+    identity = IdentityContext(
+        user_id="analyst",
+        role="Control Analyst",
+        business_unit="consumer",
+        region="US",
+        clearance=1,
+        purpose="investigation",
+        session_id="session",
+    )
+    started = time.perf_counter()
+    with pytest.raises(RuntimeError, match="failed after"):
+        registry.invoke(
+            "slow_probe",
+            {"value": 1},
+            identity=identity,
+            scope="consumer",
+            data_classification=0,
+            severity=Severity.LOW,
+        )
+    assert time.perf_counter() - started < 0.2

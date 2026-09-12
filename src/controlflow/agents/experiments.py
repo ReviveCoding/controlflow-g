@@ -164,6 +164,7 @@ def _predict_one(
         tool_context = json.loads(context)
     except (TypeError, json.JSONDecodeError):
         tool_context = {"search_controls": context, "search_regulations": ""}
+    context_id = tool_context.get("_context_id") if isinstance(tool_context, dict) else None
     available_tool_text = ", ".join(available_tools or ())
     evidence_context = "\n".join(
         str(tool_context.get(name, "")) for name in ("search_controls", "search_regulations")
@@ -222,11 +223,19 @@ def _predict_one(
             context = tool_context_loader(requested_tools, requested_arguments)
             try:
                 tool_context = json.loads(context)
+                context_id = tool_context.get("_context_id") if isinstance(tool_context, dict) else None
             except (TypeError, json.JSONDecodeError):
                 tool_context = {}
-        observation = "\n".join(
-            f"{name}: {tool_context.get(name, '')}" for name in requested_tools if name in tool_context
-        ).strip()
+        steps = tool_context.get("tool_steps", [])
+        observation = (
+            "\n".join(
+                f"step_{step['step_id']} {step['tool_name']}: {step['observation']}"
+                for step in steps
+                if isinstance(step, dict) and {"step_id", "tool_name", "observation"}.issubset(step)
+            ).strip()
+            if isinstance(steps, list)
+            else ""
+        )
         if not observation:
             observation = "No valid tool was selected; no tool observation is available."
         execution_prompt = tokenizer.apply_chat_template(
@@ -276,6 +285,7 @@ def _predict_one(
         "plan_hash": plan_hash,
         "requested_tools": requested_tools,
         "requested_arguments": requested_arguments,
+        "context_id": context_id,
     }
     return severity, disposition, valid, usage
 
@@ -302,8 +312,15 @@ def _selected_tool_context(
         row,
         config,
         session_token=session_token,
-        selected_tools=frozenset(names),
-        selected_tool_arguments={name: arguments for name, arguments in zip(names, _arguments, strict=False)},
+        selected_tool_calls=[
+            (
+                name,
+                _arguments[index]
+                if index < len(_arguments) and isinstance(_arguments[index], dict)
+                else {"__invalid__": True},
+            )
+            for index, name in enumerate(names)
+        ],
     )
 
 
@@ -484,22 +501,36 @@ def run_agents(only: frozenset[str] | None = None) -> str:
                                 session_token=session_token,
                             ),
                         )
-                    else:
+                    elif mode == "rag":
                         prediction = _predict_one(
                             str(row.narrative),
-                            workflow.context_for_llm(row, config, session_token=session_token),
+                            workflow.context_for_llm(
+                                row,
+                                config,
+                                session_token=session_token,
+                                selected_tools=frozenset({"search_controls", "search_regulations"}),
+                            ),
                             mode,
                         )
+                    else:
+                        prediction = _predict_one(str(row.narrative), "{}", mode)
                     tool_requests = (
                         prediction[3]["requested_tools"]
                         if name
                         in {
+                            "AG2_llm_rag",
                             "AG3_unrestricted_react",
                             "AG4_planner_executor",
                             "AG5_planner_executor_verifier",
                         }
                         else None
                     )
+                    if name == "AG2_llm_rag":
+                        tool_requests = ["search_controls", "search_regulations"]
+                        prediction[3]["requested_arguments"] = [
+                            {"query": str(row.narrative)},
+                            {"query": str(row.narrative)},
+                        ]
                     tool_arguments = prediction[3]["requested_arguments"] if tool_requests is not None else None
                     traces.append(
                         evaluate_trace(
@@ -512,6 +543,7 @@ def run_agents(only: frozenset[str] | None = None) -> str:
                                 tool_requests,
                                 tool_arguments,
                                 session_token=session_token,
+                                context_id=prediction[3].get("context_id"),
                             ),
                             prediction[3],
                         )
@@ -531,7 +563,13 @@ def run_agents(only: frozenset[str] | None = None) -> str:
                         evaluate_trace(
                             "AG6_controlflow_g",
                             row,
-                            workflow.execute(row, config, prediction[:3], session_token=session_token),
+                            workflow.execute(
+                                row,
+                                config,
+                                prediction[:3],
+                                session_token=session_token,
+                                context_id=prediction[3].get("context_id"),
+                            ),
                             prediction[3],
                         )
                     )

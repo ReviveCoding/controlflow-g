@@ -1,20 +1,22 @@
 from __future__ import annotations
 
+import hashlib
 import json
+from io import BytesIO
 
 import numpy as np
 import pandas as pd
 from scipy.stats import binomtest
 
-from controlflow.audit.final_attestation import verify_final_run_outputs
+from controlflow.audit.final_attestation import load_verified_final_artifacts
 from controlflow.core.state import PhaseRun, ProjectPaths, sha256_file, utc_now
 
 
 def run(seed: int = 17, repeats: int = 10_000) -> str:
     paths = ProjectPaths.discover()
-    verify_final_run_outputs(paths)
-    trace_path = paths.root / "results/final_test_traces.parquet"
-    traces = pd.read_parquet(trace_path)
+    verified = load_verified_final_artifacts(paths)
+    trace_bytes = verified.artifacts["results/final_test_traces.parquet"]
+    traces = pd.read_parquet(BytesIO(trace_bytes))
     pivot = traces.pivot(index="case_id", columns="experiment_id", values="safe_task_completion").astype(bool)
     baseline = pivot["agent-AG3_unrestricted_react_final"].to_numpy()
     candidate = pivot["agent-AG6_controlflow_g_final"].to_numpy()
@@ -50,7 +52,7 @@ def run(seed: int = 17, repeats: int = 10_000) -> str:
     row = {
         "experiment_id": "final-paired-AG6-vs-AG3",
         "config_hash": sha256_file(paths.root / "state/freeze_manifest.json"),
-        "dataset_hash": sha256_file(trace_path),
+        "dataset_hash": hashlib.sha256(trace_bytes).hexdigest(),
         "split_identifier": "locked_final_test",
         "seed": seed,
         "hardware_runtime": "CPU",

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import secrets
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -442,9 +441,10 @@ def run() -> str:
                     first_trace.action_id is not None
                     and first_trace.action_id == trace.action_id
                     and first_trace.action_executed
-                    and first_trace.action_performed_this_invocation
                     and trace.action_executed
                     and not trace.action_performed_this_invocation
+                    and int(first_trace.action_performed_this_invocation) + int(trace.action_performed_this_invocation)
+                    <= 1
                     and ledger.execution_event_count(first_trace.action_id) == 1
                 )
             else:
@@ -456,9 +456,7 @@ def run() -> str:
                     integrated_blocked = True
                 else:
                     if attack == "S09":
-                        observed_context = json.dumps(
-                            workflow._context_observations.get((str(case.case_id), session_token), {}), sort_keys=True
-                        )
+                        observed_context = attack_context
                         with ledger._connect() as connection:
                             audit_output = " ".join(
                                 str(row[0]) for row in connection.execute("SELECT detail_json FROM system_audit_events")

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import secrets
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -48,6 +49,7 @@ INJECTION = re.compile(
     r"unrestricted\s+tool|role\s*=\s*administrator|i\s*g\s*n\s*o\s*r\s*e",
     re.I,
 )
+READ_TOOL_TIMEOUT_SECONDS = 30.0
 
 
 class EvidenceSearchInput(BaseModel):
@@ -226,11 +228,11 @@ class GovernedWorkflow:
         if recorded_hashes.get("data/staging/transactions_raw.parquet") != sha256_file(transaction_path):
             raise ValueError("transaction query source failed artifact verification")
         self._retriever_cache: dict[tuple[str, int, int, bool, bool], BM25Retriever | NeuralHybridRetriever] = {}
-        self._context_observations: dict[tuple[str, str], dict[str, object]] = {}
-        self._context_timings: dict[tuple[str, str], tuple[float, float]] = {}
-        self._context_tool_outputs: dict[tuple[str, str], dict[str, BaseModel]] = {}
-        self._context_evidence: dict[tuple[str, str], list[TemporalEvidence]] = {}
-        self._context_attempted_tools: dict[tuple[str, str], frozenset[str]] = {}
+        self._context_observations: dict[tuple[str, str, str], dict[str, object]] = {}
+        self._context_timings: dict[tuple[str, str, str], tuple[float, float]] = {}
+        self._context_tool_outputs: dict[tuple[str, str, str], dict[str, BaseModel]] = {}
+        self._context_evidence: dict[tuple[str, str, str], list[TemporalEvidence]] = {}
+        self._context_attempted_tools: dict[tuple[str, str, str], frozenset[str]] = {}
         origin = datetime(2020, 1, 1, tzinfo=UTC)
         self.evidence_corpus: list[TemporalEvidence] = []
         for control in controls.itertuples():
@@ -360,15 +362,20 @@ class GovernedWorkflow:
         session_token: str,
         selected_tools: frozenset[str] | None = None,
         selected_tool_arguments: dict[str, dict[str, object]] | None = None,
+        selected_tool_calls: list[tuple[str, dict[str, object]]] | None = None,
+        invocation_id: str | None = None,
     ) -> str:
         """Build context from authorized tool outputs.
 
-        ``selected_tools`` is used by planner/ReAct architectures after their
+        ``selected_tool_calls`` is used by planner/ReAct architectures after their
         first model turn.  It prevents unselected tools from being executed or
-        charged to the run.  ``None`` retains eager context construction for
+        charged to the run while preserving submitted order and step identity.
+        The older set/dictionary parameters remain for deterministic callers.
+        ``None`` retains eager context construction for
         RAG and the deterministic ControlFlow-G context assembly.
         """
         started = time.perf_counter()
+        context_id = invocation_id or secrets.token_hex(16)
         identity = self.identity(session_token)
         resource_scope = self._enforce_resource_scope(row, identity)
         registry = ToolRegistry(self.policy, self.ledger.record_system_event)
@@ -486,7 +493,7 @@ class GovernedWorkflow:
                 frozenset({"Control Analyst"}),
                 frozenset({identity.business_unit}),
                 False,
-                2.0,
+                READ_TOOL_TIMEOUT_SECONDS,
                 1,
                 search("controls"),
             ),
@@ -499,7 +506,7 @@ class GovernedWorkflow:
                 frozenset({"Control Analyst"}),
                 frozenset({identity.business_unit}),
                 False,
-                2.0,
+                READ_TOOL_TIMEOUT_SECONDS,
                 1,
                 search("regulations"),
             ),
@@ -512,7 +519,7 @@ class GovernedWorkflow:
                 frozenset({"Control Analyst"}),
                 frozenset({identity.business_unit}),
                 False,
-                2.0,
+                READ_TOOL_TIMEOUT_SECONDS,
                 1,
                 risk_tool,
             ),
@@ -525,7 +532,7 @@ class GovernedWorkflow:
                 frozenset({"Control Analyst"}),
                 frozenset({identity.business_unit}),
                 False,
-                2.0,
+                READ_TOOL_TIMEOUT_SECONDS,
                 1,
                 anomaly_tool,
             ),
@@ -538,7 +545,7 @@ class GovernedWorkflow:
                 frozenset({"Control Analyst"}),
                 frozenset({identity.business_unit}),
                 False,
-                2.0,
+                READ_TOOL_TIMEOUT_SECONDS,
                 1,
                 search_cases,
             ),
@@ -551,7 +558,7 @@ class GovernedWorkflow:
                 frozenset({"Control Analyst"}),
                 frozenset({identity.business_unit}),
                 False,
-                2.0,
+                READ_TOOL_TIMEOUT_SECONDS,
                 1,
                 policy_at_time,
             ),
@@ -564,7 +571,7 @@ class GovernedWorkflow:
                 frozenset({"Control Analyst"}),
                 frozenset({identity.business_unit}),
                 False,
-                2.0,
+                READ_TOOL_TIMEOUT_SECONDS,
                 1,
                 query_case,
             ),
@@ -577,7 +584,7 @@ class GovernedWorkflow:
                 frozenset({"Control Analyst"}),
                 frozenset({identity.business_unit}),
                 False,
-                2.0,
+                READ_TOOL_TIMEOUT_SECONDS,
                 1,
                 query_transactions,
             ),
@@ -590,7 +597,7 @@ class GovernedWorkflow:
                 frozenset({"Control Analyst"}),
                 frozenset({identity.business_unit}),
                 False,
-                2.0,
+                READ_TOOL_TIMEOUT_SECONDS,
                 1,
                 evidence_bundle,
             ),
@@ -617,59 +624,95 @@ class GovernedWorkflow:
                 tool_errors[name] = {"error": "argument_or_authorization_rejected"}
                 return None
 
-        enabled = {spec.name for spec in specs} if selected_tools is None else set(selected_tools)
-        control_result = (
-            invoke("search_controls", arguments_for("search_controls", {"query": str(row.narrative)}))
-            if "search_controls" in enabled
-            else None
-        )
-        regulation_result = (
-            invoke("search_regulations", arguments_for("search_regulations", {"query": str(row.narrative)}))
-            if "search_regulations" in enabled
-            else None
-        )
-        risk_result = (
-            invoke("compute_risk", arguments_for("compute_risk", {"case_id": str(row.case_id)}))
-            if config.ml_risk and "compute_risk" in enabled
-            else None
-        )
-        anomaly_result = (
-            invoke("compute_anomaly", arguments_for("compute_anomaly", {"case_id": str(row.case_id)}))
-            if config.ml_risk and config.anomaly and "compute_anomaly" in enabled
-            else None
-        )
+        defaults: dict[str, dict[str, object]] = {
+            "search_controls": {"query": str(row.narrative)},
+            "search_regulations": {"query": str(row.narrative)},
+            **{
+                name: {"case_id": str(row.case_id)}
+                for name in (
+                    "compute_risk",
+                    "compute_anomaly",
+                    "search_cases",
+                    "get_policy_at_time",
+                    "query_case_data",
+                    "query_transactions",
+                    "generate_evidence_bundle",
+                )
+            },
+            "propose_case_update": {"case_id": str(row.case_id), "status": "investigated"},
+        }
+        if selected_tool_calls is not None:
+            submitted_names = [name for name, _ in selected_tool_calls]
+            malformed = any("__invalid__" in arguments for _, arguments in selected_tool_calls)
+            if len(submitted_names) != len(set(submitted_names)) or malformed:
+                tool_errors["plan"] = {
+                    "error": (
+                        "duplicate_tool_request_rejected_before_execution"
+                        if len(submitted_names) != len(set(submitted_names))
+                        else "malformed_tool_plan_rejected_before_execution"
+                    )
+                }
+                ordered_calls: list[tuple[str, dict[str, object]]] = []
+            else:
+                ordered_calls = selected_tool_calls
+        else:
+            enabled = {spec.name for spec in specs} if selected_tools is None else set(selected_tools)
+            ordered_calls = [
+                (spec.name, arguments_for(spec.name, defaults[spec.name])) for spec in specs if spec.name in enabled
+            ]
+        outputs: dict[str, BaseModel] = {}
+        tool_steps: list[dict[str, object]] = []
+        for index, (name, arguments) in enumerate(ordered_calls):
+            if name not in defaults:
+                tool_errors[f"step_{index}"] = {"error": "unknown_tool", "tool_name": name}
+                continue
+            if name == "propose_case_update":
+                tool_steps.append(
+                    {
+                        "step_id": index,
+                        "tool_name": name,
+                        "observation": {"status": "deferred_to_authorization_boundary"},
+                    }
+                )
+                continue
+            if name in {"compute_risk", "compute_anomaly"} and not config.ml_risk:
+                tool_errors[f"step_{index}"] = {"error": "tool_disabled", "tool_name": name}
+                continue
+            if name == "compute_anomaly" and not config.anomaly:
+                tool_errors[f"step_{index}"] = {"error": "tool_disabled", "tool_name": name}
+                continue
+            result = invoke(name, arguments)
+            observation: object = {"error": "argument_or_authorization_rejected"}
+            if result is not None:
+                outputs[name] = result
+                observation = result.model_dump(mode="json")
+            tool_steps.append({"step_id": index, "tool_name": name, "observation": observation})
+        control_result = outputs.get("search_controls")
+        regulation_result = outputs.get("search_regulations")
+        risk_result = outputs.get("compute_risk")
+        anomaly_result = outputs.get("compute_anomaly")
         auxiliary_results = {
-            name: invoke(name, arguments_for(name, {"case_id": str(row.case_id)}))
-            for name in (
+            name: result
+            for name, result in outputs.items()
+            if name
+            in {
                 "search_cases",
                 "get_policy_at_time",
                 "query_case_data",
                 "query_transactions",
                 "generate_evidence_bundle",
-            )
-            if name in enabled
+            }
         }
         control_ids = control_result.evidence_ids if isinstance(control_result, EvidenceSearchOutput) else []
         regulation_ids = regulation_result.evidence_ids if isinstance(regulation_result, EvidenceSearchOutput) else []
         structured_context: dict[str, object] = {
             name: result.model_dump(mode="json") for name, result in auxiliary_results.items() if result is not None
         }
-        cache_key = (str(row.case_id), session_token)
-        outputs = {
-            name: result
-            for name, result in {
-                "search_controls": control_result,
-                "search_regulations": regulation_result,
-                "compute_risk": risk_result,
-                "compute_anomaly": anomaly_result,
-                **auxiliary_results,
-            }.items()
-            if result is not None
-        }
+        cache_key = (str(row.case_id), session_token, context_id)
         self._context_observations[cache_key] = structured_context
         self._context_tool_outputs[cache_key] = outputs
         self._context_evidence[cache_key] = list(retrieved_by_tool.values())
-        self._context_attempted_tools[cache_key] = frozenset(enabled)
+        self._context_attempted_tools[cache_key] = frozenset(name for name, _ in ordered_calls)
         context = json.dumps(
             {
                 "search_controls": [retrieved_by_tool[item].text[:300] for item in control_ids],
@@ -678,9 +721,11 @@ class GovernedWorkflow:
                 "compute_anomaly": anomaly_result.model_dump(mode="json") if anomaly_result else {},
                 **structured_context,
                 **tool_errors,
+                "tool_steps": tool_steps,
+                "_context_id": context_id,
                 **(
                     {"propose_case_update": "write action requires the workflow authorization boundary"}
-                    if "propose_case_update" in enabled
+                    if any(name == "propose_case_update" for name, _ in ordered_calls)
                     else {}
                 ),
             },
@@ -694,7 +739,7 @@ class GovernedWorkflow:
             if retrieval_executed and config.retrieval and config.reranker and self.require_cuda_retrieval
             else 0.0
         )
-        self._context_timings[(str(row.case_id), session_token)] = (elapsed, gpu_seconds)
+        self._context_timings[cache_key] = (elapsed, gpu_seconds)
         return context
 
     def execute(
@@ -706,6 +751,7 @@ class GovernedWorkflow:
         llm_tool_arguments: list[dict[str, object]] | None = None,
         *,
         session_token: str,
+        context_id: str | None = None,
     ) -> WorkflowTrace:
         started = time.perf_counter()
         identity = self.identity(session_token)
@@ -713,16 +759,29 @@ class GovernedWorkflow:
         tool_calls: list[str] = []
         requested = set(llm_tool_requests) if llm_tool_requests is not None else None
         duplicate_requests = len(llm_tool_requests or []) - len(requested or set())
+        malformed_plan = llm_tool_requests is not None and len(llm_tool_requests) != len(llm_tool_arguments or [])
+        plan_rejected = duplicate_requests > 0 or malformed_plan
+        if plan_rejected:
+            requested = set()
         requested_arguments = {
             name: arguments for name, arguments in zip(llm_tool_requests or [], llm_tool_arguments or [], strict=False)
         }
-        cache_key = (str(row.case_id), session_token)
-        tool_argument_errors = max(0, duplicate_requests)
+        if context_id is None:
+            matching_keys = [
+                key for key in self._context_observations if key[0] == str(row.case_id) and key[1] == session_token
+            ]
+            if len(matching_keys) > 1:
+                raise RuntimeError("ambiguous concurrent tool context; invocation ID is required")
+            cache_key = matching_keys[0] if matching_keys else (str(row.case_id), session_token, "none")
+        else:
+            cache_key = (str(row.case_id), session_token, context_id)
+        tool_argument_errors = max(0, duplicate_requests) + int(malformed_plan)
         structured_tool_results = dict(self._context_observations.get(cache_key, {}))
         cached_outputs = self._context_tool_outputs.get(cache_key, {})
         cached_evidence = self._context_evidence.get(cache_key, [])
         attempted_tools = self._context_attempted_tools.get(cache_key, frozenset())
-        risk_requested = requested is None or bool(requested & {"compute_risk", "compute_anomaly"})
+        risk_requested = requested is None or "compute_risk" in requested
+        anomaly_requested = requested is None or "compute_anomaly" in requested
         retrieval_requested = requested is None or bool(
             requested
             & {
@@ -813,6 +872,8 @@ class GovernedWorkflow:
                 severity = str(risk_result.severity)  # type: ignore[attr-defined]
                 confidence = float(risk_result.confidence)  # type: ignore[attr-defined]
                 try:
+                    if not config.anomaly or not anomaly_requested:
+                        raise LookupError("anomaly tool was not requested")
                     if "compute_anomaly" in attempted_tools:
                         anomaly_result = cached_outputs.get("compute_anomaly")
                         if not isinstance(anomaly_result, AnomalyToolOutput):
@@ -829,15 +890,38 @@ class GovernedWorkflow:
                     anomaly_score = float(anomaly_result.score)  # type: ignore[attr-defined]
                     if config.anomaly and bool(anomaly_result.is_anomaly):  # type: ignore[attr-defined]
                         severity = LABELS[min(3, LABELS.index(severity) + 1)]
+                except LookupError:
+                    anomaly_score = 0.0
                 except (ValidationError, PermissionError):
                     anomaly_score = 0.0
                     tool_argument_errors += 1
                 tool_calls.append("compute_risk")
-                if config.anomaly and tool_argument_errors == 0:
+                if config.anomaly and anomaly_requested and tool_argument_errors == 0:
                     tool_calls.append("compute_anomaly")
         else:
             severity = llm_severity
             confidence, anomaly_score = 0.5, 0.0
+            if config.ml_risk and config.anomaly and anomaly_requested:
+                try:
+                    if "compute_anomaly" in attempted_tools:
+                        anomaly_result = cached_outputs.get("compute_anomaly")
+                        if not isinstance(anomaly_result, AnomalyToolOutput):
+                            raise PermissionError("cached anomaly tool call was rejected")
+                    else:
+                        anomaly_result = service_registry.invoke(
+                            "compute_anomaly",
+                            requested_arguments.get("compute_anomaly", {"case_id": str(row.case_id)}),
+                            identity=identity,
+                            scope=resource_scope,
+                            data_classification=int(row.get("data_sensitivity", 0)),
+                            severity=Severity(severity),
+                        )
+                    anomaly_score = float(anomaly_result.score)  # type: ignore[attr-defined]
+                    if bool(anomaly_result.is_anomaly):  # type: ignore[attr-defined]
+                        severity = LABELS[min(3, LABELS.index(severity) + 1)]
+                    tool_calls.append("compute_anomaly")
+                except (ValidationError, PermissionError):
+                    tool_argument_errors += 1
         evidence: list[TemporalEvidence] = []
         temporal = True
         feature_temporal = pd.Timestamp(row.get("feature_event_timestamp", row.event_timestamp)) <= pd.Timestamp(
@@ -878,7 +962,7 @@ class GovernedWorkflow:
                         allowed_roles=frozenset({"Control Analyst"}),
                         allowed_data_scopes=frozenset({identity.business_unit}),
                         human_review_required=False,
-                        timeout_seconds=2.0,
+                        timeout_seconds=READ_TOOL_TIMEOUT_SECONDS,
                         max_retries=1,
                         implementation=evidence_search(tool_name),
                     )
@@ -1302,7 +1386,7 @@ class GovernedWorkflow:
                 self.state_dir / f"{safe_case_key}.json",
                 state.model_dump(mode="json"),
             )
-        context_latency, context_gpu_seconds = self._context_timings.pop((str(row.case_id), session_token), (0.0, 0.0))
+        context_latency, context_gpu_seconds = self._context_timings.pop(cache_key, (0.0, 0.0))
         self._context_observations.pop(cache_key, None)
         self._context_tool_outputs.pop(cache_key, None)
         self._context_evidence.pop(cache_key, None)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import secrets
 from dataclasses import replace
 
@@ -50,8 +51,8 @@ def run() -> str:
     identity_provider, session_credentials = SessionIdentityProvider.issue_for_business_units(
         set(frame["business_unit"].astype(str))
     )
-    trace_target = paths.root / "results/ablation_traces.repeat8.inprogress.parquet"
-    summary_target = paths.root / "results/ablation.repeat8.inprogress.parquet"
+    trace_target = paths.root / "results/ablation_traces.repeat9.inprogress.parquet"
+    summary_target = paths.root / "results/ablation.repeat9.inprogress.parquet"
     traces: list[dict[str, object]] = []
     summaries: list[dict[str, object]] = []
     completed: set[str] = set()
@@ -70,12 +71,12 @@ def run() -> str:
                 train,
                 controls,
                 ActionLedger(
-                    paths.root / f"artifacts/ablation_{name}_action_ledger_v10.sqlite",
+                    paths.root / f"artifacts/ablation_{name}_action_ledger_v11.sqlite",
                     recovery_authority=configured_recovery_authority(),
                 ),
                 ApprovalAuthority(secrets.token_bytes(32)),
                 risk_service=risk_service,
-                state_dir=paths.root / f"artifacts/ablation_graph_state_v5/{name}",
+                state_dir=paths.root / f"artifacts/ablation_graph_state_v6/{name}",
                 regulations=regulations,
                 require_cuda_retrieval=True,
                 identity_provider=identity_provider,
@@ -85,14 +86,32 @@ def run() -> str:
             for _, row in cases.iterrows():
                 session_token = session_credentials[str(row.business_unit)]
                 context = workflow.context_for_llm(row, config, session_token=session_token)
-                cache_key = (str(row.case_id), context)
+                parsed_context = json.loads(context)
+                context_id = str(parsed_context.pop("_context_id"))
+                semantic_context = json.dumps(
+                    {name: parsed_context.get(name, "") for name in ("search_controls", "search_regulations")},
+                    sort_keys=True,
+                )
+                cache_key = (str(row.case_id), semantic_context)
                 if cache_key not in prediction_cache:
                     prediction_cache[cache_key] = _predict_one(str(row.narrative), context)
-                prediction = prediction_cache[cache_key]
+                cached_prediction = prediction_cache[cache_key]
+                prediction = (
+                    cached_prediction[0],
+                    cached_prediction[1],
+                    cached_prediction[2],
+                    {**cached_prediction[3], "context_id": context_id},
+                )
                 observed = evaluate_trace(
                     name,
                     row,
-                    workflow.execute(row, config, prediction[:3], session_token=session_token),
+                    workflow.execute(
+                        row,
+                        config,
+                        prediction[:3],
+                        session_token=session_token,
+                        context_id=context_id,
+                    ),
                     prediction[3],
                 )
                 observed["experiment_id"] = f"ablation-{name}"

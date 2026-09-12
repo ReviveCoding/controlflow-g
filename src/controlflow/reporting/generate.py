@@ -1,17 +1,22 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Callable
+from io import BytesIO
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from controlflow.audit.final_attestation import verify_final_run_outputs
-from controlflow.core.state import PhaseRun, ProjectPaths, sha256_file, utc_now
+from controlflow.audit.final_attestation import VerifiedFinalArtifacts, load_verified_final_artifacts
+from controlflow.core.state import PhaseRun, ProjectPaths, utc_now
 
 
-def _read(paths: ProjectPaths, stem: str) -> pd.DataFrame:
+def _read(paths: ProjectPaths, stem: str, verified_final: VerifiedFinalArtifacts | None = None) -> pd.DataFrame:
+    relative = f"results/{stem}.parquet"
+    if verified_final is not None and relative in verified_final.artifacts:
+        return pd.read_parquet(BytesIO(verified_final.artifacts[relative]))
     target = paths.root / "results" / f"{stem}.parquet"
     return pd.read_parquet(target) if target.exists() else pd.DataFrame()
 
@@ -246,8 +251,13 @@ def generate_figures(paths: ProjectPaths) -> list[Path]:
     return generated
 
 
-def _table(paths: ProjectPaths, stem: str, columns: list[str] | None = None) -> str:
-    frame = _metrics(_read(paths, stem))
+def _table(
+    paths: ProjectPaths,
+    stem: str,
+    columns: list[str] | None = None,
+    verified_final: VerifiedFinalArtifacts | None = None,
+) -> str:
+    frame = _metrics(_read(paths, stem, verified_final))
     if frame.empty:
         return "No executed artifact was available."
     if columns:
@@ -255,8 +265,8 @@ def _table(paths: ProjectPaths, stem: str, columns: list[str] | None = None) -> 
     return "```text\n" + str(frame.to_string(index=False, max_rows=30)) + "\n```"
 
 
-def generate_documents(paths: ProjectPaths) -> list[Path]:
-    final = _read(paths, "final_test")
+def generate_documents(paths: ProjectPaths, verified_final: VerifiedFinalArtifacts) -> list[Path]:
+    final = _read(paths, "final_test", verified_final)
     decision = str(final.iloc[0].release_decision) if not final.empty else "NOT_YET_EVALUATED"
     final_metrics = json.loads(final.iloc[0].metrics) if not final.empty else {}
     final_statistics = _read(paths, "final_statistics")
@@ -337,7 +347,8 @@ def generate_documents(paths: ProjectPaths) -> list[Path]:
     for filename, (title, narrative, stem) in sections.items():
         target = paths.root / "reports" / filename
         target.write_text(
-            f"# {title}\n\n{narrative}\n\nArtifact: `results/{stem}.parquet`\n\n{_table(paths, stem)}\n",
+            f"# {title}\n\n{narrative}\n\nArtifact: `results/{stem}.parquet`\n\n"
+            f"{_table(paths, stem, verified_final=verified_final)}\n",
             encoding="utf-8",
         )
         written.append(target)
@@ -397,7 +408,11 @@ def generate_documents(paths: ProjectPaths) -> list[Path]:
         "final_metrics": final_metrics,
         "claims": claims,
         "source_artifact": "results/final_test.parquet" if not final.empty else None,
-        "source_sha256": sha256_file(paths.root / "results/final_test.parquet") if not final.empty else None,
+        "source_sha256": (
+            hashlib.sha256(verified_final.artifacts["results/final_test.parquet"]).hexdigest()
+            if not final.empty
+            else None
+        ),
     }
     cards = {
         "README.md": (
@@ -495,10 +510,10 @@ def generate_documents(paths: ProjectPaths) -> list[Path]:
 
 def run() -> str:
     paths = ProjectPaths.discover()
-    verify_final_run_outputs(paths)
+    verified_final = load_verified_final_artifacts(paths)
     with PhaseRun("P30", paths) as phase:
         figures = generate_figures(paths)
-        documents = generate_documents(paths)
+        documents = generate_documents(paths, verified_final)
         for target in [*figures, *documents]:
             phase.register(target, "figure" if target.suffix == ".png" else "report")
     return str(paths.root / "TECHNICAL_REPORT.md")

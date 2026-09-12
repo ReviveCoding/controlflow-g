@@ -1,20 +1,20 @@
 from __future__ import annotations
 
 import json
+from io import BytesIO
 
 import pandas as pd
 
-from controlflow.audit.final_attestation import verify_final_run_outputs
+from controlflow.audit.final_attestation import load_verified_final_artifacts
 from controlflow.core.state import PhaseRun, ProjectPaths, canonical_json, sha256_file, utc_now
 
 
 def run() -> str:
     paths = ProjectPaths.discover()
-    verify_final_run_outputs(paths)
-    final_path = paths.root / "results/final_test.parquet"
-    final = pd.read_parquet(final_path).iloc[0]
+    verified = load_verified_final_artifacts(paths)
+    final = pd.read_parquet(BytesIO(verified.artifacts["results/final_test.parquet"])).iloc[0]
     metrics = json.loads(final.metrics)
-    traces = pd.read_parquet(paths.root / "results/final_test_traces.parquet")
+    traces = pd.read_parquet(BytesIO(verified.artifacts["results/final_test_traces.parquet"]))
     architecture_metrics = {
         architecture: {
             "safe_task_completion": float(group.safe_task_completion.mean()),

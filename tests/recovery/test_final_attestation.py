@@ -6,7 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from controlflow.audit.final_attestation import FinalRunAttestor, verify_final_run_outputs
+from controlflow.audit.final_attestation import (
+    FinalRunAttestor,
+    load_verified_final_artifacts,
+    verify_final_run_outputs,
+)
 from controlflow.core.state import ProjectPaths, canonical_json, sha256_file
 
 
@@ -34,7 +38,25 @@ def test_every_final_consumer_verifier_rejects_result_replacement(
     run = {"run_id": "run", "freeze_hash": "freeze", "status": "complete"}
     (state / "final_run.json").write_text(json.dumps(run), encoding="utf-8")
     attestor = FinalRunAttestor()
-    checkpoint = {"run_id": "run", "freeze_hash": "freeze", "count": 0, "records": {}}
+    progress = attestor.initialize_progress(
+        "run",
+        "freeze",
+        {
+            "records": {},
+            "active_work_id": None,
+            "attempt_started_at": "2026-01-01T00:00:00+00:00",
+            "accumulated_runtime_seconds": 0.0,
+            "retry_count": 0,
+            "transition": "test",
+        },
+    )
+    checkpoint = {
+        "run_id": "run",
+        "freeze_hash": "freeze",
+        "count": 0,
+        "records": {},
+        "progress_head": hashlib.sha256(canonical_json(progress)).hexdigest(),
+    }
     attestor.write_anchor("final-checkpoints-run.json", checkpoint)
     attestor.write_anchor(
         "final-result-run.json",
@@ -50,6 +72,40 @@ def test_every_final_consumer_verifier_rejects_result_replacement(
     )
     paths = ProjectPaths(tmp_path)
     verify_final_run_outputs(paths)
+    verified = load_verified_final_artifacts(paths)
     result.write_bytes(b"replacement")
+    assert verified.artifacts["results/final_test.parquet"] == b"result"
     with pytest.raises(RuntimeError, match="integrity verification"):
         verify_final_run_outputs(paths)
+
+
+def test_progress_chain_rejects_deletion_and_head_rollback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CONTROLFLOW_AUDIT_TRUST_DIR", str(tmp_path / "trust"))
+    attestor = FinalRunAttestor()
+    initial = attestor.initialize_progress("run", "freeze", {"records": {}, "active_work_id": None})
+    advanced = attestor.append_progress("run", "freeze", {"records": {"work": "hash"}, "active_work_id": None})
+    head_path = attestor.trust / "final-progress-run.json"
+    archived_head = attestor.envelope(
+        {
+            "run_id": "run",
+            "freeze_hash": "freeze",
+            "sequence": 0,
+            "entry_hash": hashlib.sha256(canonical_json(initial)).hexdigest(),
+        }
+    )
+    head_path.write_text(json.dumps(archived_head), encoding="utf-8")
+    with pytest.raises(RuntimeError, match=r"progress head rollback|progress chain"):
+        # The later protected entry makes an archived head rollback detectable.
+        attestor.read_progress("run", "freeze")
+    attestor.write_anchor(
+        "final-progress-run.json",
+        {
+            "run_id": "run",
+            "freeze_hash": "freeze",
+            "sequence": 1,
+            "entry_hash": hashlib.sha256(canonical_json(advanced)).hexdigest(),
+        },
+    )
+    (attestor.trust / "final-progress-run-00000001.json").unlink()
+    with pytest.raises(RuntimeError, match=r"head rollback|entry deletion|missing protected"):
+        attestor.read_progress("run", "freeze")
