@@ -4,12 +4,39 @@ import json
 import os
 from contextlib import AbstractContextManager
 from pathlib import Path
+from threading import Condition
 from typing import Literal
 
 import psutil
 from filelock import FileLock, Timeout
 
 from controlflow.core.state import ProjectPaths, atomic_write_json, utc_now
+
+_TOOL_WORKER_CONDITION = Condition()
+_ACTIVE_TOOL_WORKERS = 0
+
+
+def register_tool_worker() -> None:
+    """Register work that may retain CUDA state beyond its caller deadline."""
+    global _ACTIVE_TOOL_WORKERS
+    with _TOOL_WORKER_CONDITION:
+        _ACTIVE_TOOL_WORKERS += 1
+
+
+def unregister_tool_worker() -> None:
+    global _ACTIVE_TOOL_WORKERS
+    with _TOOL_WORKER_CONDITION:
+        if _ACTIVE_TOOL_WORKERS <= 0:
+            raise RuntimeError("tool worker accounting underflow")
+        _ACTIVE_TOOL_WORKERS -= 1
+        _TOOL_WORKER_CONDITION.notify_all()
+
+
+def wait_for_tool_workers() -> None:
+    """Retain the host-wide GPU lease until every local tool worker exits."""
+    with _TOOL_WORKER_CONDITION:
+        while _ACTIVE_TOOL_WORKERS:
+            _TOOL_WORKER_CONDITION.wait()
 
 
 class GpuSemaphore(AbstractContextManager["GpuSemaphore"]):
@@ -36,6 +63,10 @@ class GpuSemaphore(AbstractContextManager["GpuSemaphore"]):
         return self
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> Literal[False]:
+        # A timed-out tool runs in a quarantined daemon thread. It can still own
+        # CUDA allocations after its caller returns, so do not advertise the
+        # physical GPU as available to another process until that worker exits.
+        wait_for_tool_workers()
         if self.acquired and self.owner_path.exists():
             record = json.loads(self.owner_path.read_text(encoding="utf-8"))
             if record.get("owner_token") == self.owner_token:

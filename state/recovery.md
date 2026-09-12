@@ -60,3 +60,14 @@
 - Because every recorded governed analysis was already schema-invalid, P17/P22 were deterministically rescored with a fail-closed precondition instead of rerunning unchanged LLM inference. Future executions persist bounded root-cause text and use fresh checkpoint versions.
 - P20, P21, and P23 were regenerated. AG6 and every ablation retain STC `0.0`; the adverse floor is not hidden.
 - Exact-export checks and independent repeat-14 review remain required before P24 completion.
+
+## 2026-09-12 repeat-14 pre-final repair
+
+- Final holdout remains sealed (`sealed_test_consumed=false`); P25/P26 were not invoked.
+- Repeat-14 correctness/methodology HIGH findings and the security LOW finding were classified `VALID`; see `reports/reviews/p24_repeat14_dispositions.md`.
+- Cross-architecture STC now applies one symmetric contract. Root-cause/action correctness are secondary diagnostics and non-governed baselines receive no invented credit.
+- Governed diagnosis uses an enumerated `root_cause_code` scored by exact equality to deterministic benchmark truth; free-text keyword matching was removed.
+- A timed-out local tool worker retains both the process admission circuit and the host-wide GPU lease until it exits. Direct anchor timeout/failure regressions cover the complete database-commit plus signed-anchor zone.
+- AG6 was rerun on its 80 validation cases; all 15 ablations were rerun on 1,200 paired traces. AG6 and all ablations retain STC `0.0`; the adverse result is preserved.
+- P19 retained 15/15 blocked attacks and zero successes. P20 now explicitly measures quarantine drain recovery and records 12/12 detected recoveries with zero duplicate execution. Dependent P21 business and P23 statistical artifacts were regenerated.
+- Exact clean-export validation and repeat-15 independent review are required before P24 completion.

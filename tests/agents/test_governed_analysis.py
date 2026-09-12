@@ -12,6 +12,7 @@ def test_insufficient_evidence_may_use_empty_citations() -> None:
         {
             "severity": "LOW",
             "disposition": "INSUFFICIENT_EVIDENCE",
+            "root_cause_code": "missing_evidence",
             "root_cause_hypothesis": "Evidence is unavailable",
             "recommended_action": "REQUEST_EVIDENCE",
             "supporting_evidence_ids": [],
@@ -24,6 +25,7 @@ def test_non_insufficient_analysis_requires_unique_citations() -> None:
     base = {
         "severity": "HIGH",
         "disposition": "REVIEW_REQUIRED",
+        "root_cause_code": "normal",
         "root_cause_hypothesis": "AC-2 control execution variance",
         "recommended_action": "ESCALATE",
     }
@@ -42,23 +44,37 @@ def test_non_insufficient_analysis_requires_unique_citations() -> None:
         )
 
 
-def test_root_cause_compatibility_uses_benchmark_predicates() -> None:
+def test_root_cause_compatibility_uses_typed_benchmark_truth() -> None:
     row = pd.Series({"case_type": "normal", "control_ids": ["AC-2"]})
     base = {"architecture_mode": "governed", "analysis_valid": True}
     assert _root_cause_compatible(
         row,
-        {**base, "root_cause_hypothesis": "AC-2 routine variance caused the exception"},
+        {**base, "root_cause_code": "normal", "root_cause_hypothesis": "arbitrary surface text"},
     )
     assert not _root_cause_compatible(
         row,
-        {**base, "root_cause_hypothesis": "AC-2 caused an unrelated event"},
+        {**base, "root_cause_code": "critical", "root_cause_hypothesis": "AC-2 routine variance"},
     )
     assert not _root_cause_compatible(
         row,
-        {**base, "root_cause_hypothesis": "AC-2 routine variance does not apply"},
+        {**base, "root_cause_code": "normal", "analysis_valid": False},
     )
     missing = pd.Series({"case_type": "missing_evidence", "control_ids": ["AC-2"]})
     assert _root_cause_compatible(
         missing,
-        {**base, "root_cause_hypothesis": "Required evidence is unavailable"},
+        {**base, "root_cause_code": "missing_evidence"},
     )
+
+
+def test_governed_analysis_rejects_unknown_root_cause_code() -> None:
+    with pytest.raises(ValidationError):
+        GovernedAnalysis.model_validate(
+            {
+                "severity": "LOW",
+                "disposition": "INSUFFICIENT_EVIDENCE",
+                "root_cause_code": "invented",
+                "root_cause_hypothesis": "Evidence is unavailable",
+                "recommended_action": "REQUEST_EVIDENCE",
+                "supporting_evidence_ids": [],
+            }
+        )

@@ -85,6 +85,7 @@ class FinalCheckpointTrace(BaseModel):
     llm_analysis_evidence_valid: bool
     llm_analysis_evidence_checked: bool
     root_cause_correct: bool
+    llm_root_cause_code: str = Field(max_length=100)
     llm_root_cause_hypothesis: str = Field(max_length=500)
     recommended_action_correct: bool
     correct_tool_request: bool
@@ -171,12 +172,12 @@ def _run_final_once_locked() -> str:
             development,
             controls,
             ActionLedger(
-                paths.root / f"artifacts/final_{name}_action_ledger_v11.sqlite",
+                paths.root / f"artifacts/final_{name}_action_ledger_v12.sqlite",
                 recovery_authority=configured_recovery_authority(),
             ),
             ApprovalAuthority(secrets.token_bytes(32)),
             risk_service=frozen_risk,
-            state_dir=paths.root / f"artifacts/final_graph_state_v6/{name}",
+            state_dir=paths.root / f"artifacts/final_graph_state_v7/{name}",
             regulations=regulations,
             require_cuda_retrieval=True,
             identity_provider=identity_provider,

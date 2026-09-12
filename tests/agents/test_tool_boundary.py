@@ -15,6 +15,8 @@ from controlflow.agents.workflow import GovernedWorkflow, WorkflowConfig
 from controlflow.audit.ledger import ActionLedger
 from controlflow.authorization.identity import SessionIdentityProvider
 from controlflow.authorization.policy import LocalPolicyBackend
+from controlflow.core.resources import GpuSemaphore
+from controlflow.core.state import ProjectPaths
 from controlflow.hitl.approval import ApprovalAuthority
 from controlflow.schemas import IdentityContext, Severity
 from controlflow.tools.deadline import tool_commit_section
@@ -415,6 +417,10 @@ def test_tool_timeout_returns_within_declared_wall_clock() -> None:
     elapsed = time.perf_counter() - started
     assert 0.02 <= elapsed < 0.2
     assert registry.audit_events[-1]["status"] == "timeout_precommit_cancelled"
+    deadline = time.monotonic() + 1.0
+    while any(thread.name == "controlflow-tool-slow_probe" for thread in enumerate_threads()):
+        assert time.monotonic() < deadline
+        time.sleep(0.01)
 
 
 def test_never_returning_precommit_work_is_bounded_and_cancelled() -> None:
@@ -461,6 +467,10 @@ def test_never_returning_precommit_work_is_bounded_and_cancelled() -> None:
         )
     elapsed = time.perf_counter() - started
     release.set()
+    deadline = time.monotonic() + 1.0
+    while any(thread.name == "controlflow-tool-hung_probe" for thread in enumerate_threads()):
+        assert time.monotonic() < deadline
+        time.sleep(0.01)
     assert elapsed < 0.2
     assert registry.audit_events[-1]["status"] == "timeout_precommit_cancelled"
 
@@ -542,6 +552,71 @@ def test_hung_worker_capacity_opens_fail_closed_circuit_breaker() -> None:
         while any(thread.name.startswith("controlflow-tool-hung_") for thread in enumerate_threads()):
             assert time.monotonic() < deadline
             time.sleep(0.01)
+
+
+def test_gpu_lease_remains_locked_until_timed_out_worker_exits(tmp_path: Path) -> None:
+    paths = ProjectPaths(tmp_path)
+    paths.state.mkdir(parents=True)
+    release = Event()
+    timeout_observed = Event()
+    gpu_scope_exited = Event()
+    identity = IdentityContext(
+        user_id="analyst",
+        role="Control Analyst",
+        business_unit="consumer",
+        region="US",
+        clearance=1,
+        purpose="investigation",
+        session_id="session",
+    )
+
+    def implementation(value: Probe) -> Probe:
+        release.wait()
+        return value
+
+    def owner() -> None:
+        registry = ToolRegistry(LocalPolicyBackend())
+        registry.register(
+            ToolSpec(
+                "gpu_hung",
+                Probe,
+                Probe,
+                0,
+                True,
+                frozenset({"Control Analyst"}),
+                frozenset({"consumer"}),
+                False,
+                0.01,
+                0,
+                implementation,
+            )
+        )
+        with GpuSemaphore(paths):
+            with pytest.raises(RuntimeError, match="failed after"):
+                registry.invoke(
+                    "gpu_hung",
+                    {"value": 1},
+                    identity=identity,
+                    scope="consumer",
+                    data_classification=0,
+                    severity=Severity.LOW,
+                )
+            timeout_observed.set()
+        gpu_scope_exited.set()
+
+    owner_thread = Thread(target=owner)
+    owner_thread.start()
+    assert timeout_observed.wait(timeout=1)
+    time.sleep(0.02)
+    assert not gpu_scope_exited.is_set()
+    with pytest.raises(RuntimeError, match="GPU is locked"):
+        GpuSemaphore(paths).__enter__()
+    release.set()
+    owner_thread.join(timeout=1)
+    assert not owner_thread.is_alive()
+    assert gpu_scope_exited.is_set()
+    with GpuSemaphore(paths):
+        pass
 
 
 def test_timed_out_write_cannot_commit_later(tmp_path: Path) -> None:
@@ -679,6 +754,149 @@ def test_timeout_racing_entered_commit_waits_and_reconciles() -> None:
     assert committed == [7]
     assert errors == ["tool commit_race failed after 1 attempts"]
     assert registry.audit_events[-1]["status"] == "timeout_after_commit_reconciled"
+
+
+def test_timeout_waits_for_external_anchor_and_anchor_failure_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ledger = ActionLedger(tmp_path / "anchor-timeout.sqlite")
+    authority = ApprovalAuthority(b"anchor-timeout-secret")
+    payload = {"status": "investigated"}
+    evidence_hash = "evidence"
+    token = authority.issue_system(
+        case_id="case",
+        action_type="propose_case_update",
+        payload=payload,
+        workflow_version="workflow",
+        policy_version="local-policy-v1",
+        evidence_hash=evidence_hash,
+        risk_tier=1,
+        authorization_outcome="ALLOW",
+    )
+    entered_anchor = Event()
+    release_anchor = Event()
+    caller_done = Event()
+    original_sync = ledger._sync_action_anchor
+
+    def blocked_sync() -> None:
+        entered_anchor.set()
+        release_anchor.wait(timeout=2)
+        original_sync()
+
+    monkeypatch.setattr(ledger, "_sync_action_anchor", blocked_sync)
+
+    def implementation(value: Probe) -> Probe:
+        ledger.execute_simulated(
+            case_id="case",
+            action_type="propose_case_update",
+            payload=payload,
+            workflow_version="workflow",
+            authorization_token=token,
+            approval_authority=authority,
+            evidence_hash=evidence_hash,
+        )
+        return value
+
+    registry = ToolRegistry(LocalPolicyBackend())
+    registry.register(
+        ToolSpec(
+            "anchor_write",
+            Probe,
+            Probe,
+            1,
+            False,
+            frozenset({"Control Analyst"}),
+            frozenset({"consumer"}),
+            False,
+            0.1,
+            0,
+            implementation,
+        )
+    )
+    identity = IdentityContext(
+        user_id="analyst",
+        role="Control Analyst",
+        business_unit="consumer",
+        region="US",
+        clearance=1,
+        purpose="investigation",
+        session_id="session",
+    )
+
+    def invoke() -> None:
+        with pytest.raises(RuntimeError, match="failed after"):
+            registry.invoke(
+                "anchor_write",
+                {"value": 1},
+                identity=identity,
+                scope="consumer",
+                data_classification=0,
+                severity=Severity.LOW,
+            )
+        caller_done.set()
+
+    caller = Thread(target=invoke)
+    caller.start()
+    assert entered_anchor.wait(timeout=1)
+    time.sleep(0.15)
+    assert not caller_done.is_set()
+    release_anchor.set()
+    caller.join(timeout=1)
+    assert caller_done.is_set()
+    assert registry.audit_events[-1]["status"] == "timeout_after_commit_reconciled"
+    assert ledger.verify_event_chain()
+
+    broken = ActionLedger(tmp_path / "anchor-failure.sqlite")
+    broken_token = authority.issue_system(
+        case_id="broken",
+        action_type="propose_case_update",
+        payload=payload,
+        workflow_version="workflow",
+        policy_version="local-policy-v1",
+        evidence_hash=evidence_hash,
+        risk_tier=1,
+        authorization_outcome="ALLOW",
+    )
+    monkeypatch.setattr(broken, "_sync_action_anchor", lambda: (_ for _ in ()).throw(OSError("anchor unavailable")))
+
+    def broken_implementation(value: Probe) -> Probe:
+        broken.execute_simulated(
+            case_id="broken",
+            action_type="propose_case_update",
+            payload=payload,
+            workflow_version="workflow",
+            authorization_token=broken_token,
+            approval_authority=authority,
+            evidence_hash=evidence_hash,
+        )
+        return value
+
+    broken_registry = ToolRegistry(LocalPolicyBackend())
+    broken_registry.register(
+        ToolSpec(
+            "broken_anchor_write",
+            Probe,
+            Probe,
+            1,
+            False,
+            frozenset({"Control Analyst"}),
+            frozenset({"consumer"}),
+            False,
+            1.0,
+            0,
+            broken_implementation,
+        )
+    )
+    with pytest.raises(RuntimeError, match="failed after"):
+        broken_registry.invoke(
+            "broken_anchor_write",
+            {"value": 1},
+            identity=identity,
+            scope="consumer",
+            data_classification=0,
+            severity=Severity.LOW,
+        )
+    assert not broken.verify_event_chain()
 
 
 def test_context_id_is_bound_to_exact_ordered_tool_arguments(tmp_path: Path, tool_corpus: Path) -> None:

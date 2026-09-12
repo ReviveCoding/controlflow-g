@@ -1126,7 +1126,7 @@ class GovernedWorkflow:
                         tool_argument_errors += 1
         state = AgentState(
             case_id=str(row.case_id),
-            workflow_version="agent-graph-v3",
+            workflow_version="agent-graph-v4",
             event_time=pd.Timestamp(row.event_timestamp).to_pydatetime(),
             system_time=pd.Timestamp(row.event_timestamp).to_pydatetime(),
             identity_context=identity,
@@ -1210,7 +1210,7 @@ class GovernedWorkflow:
                         str(row.case_id),
                         "propose_case_update",
                         {"status": "investigated"},
-                        "agent-graph-v3",
+                        "agent-graph-v4",
                     ),
                     policy_version="local-policy-v1",
                     evidence_hash="analysis-context",
@@ -1262,6 +1262,7 @@ class GovernedWorkflow:
             bool(analysis.get("analysis_valid", False)) if analysis.get("architecture_mode") == "governed" else True
         )
         root_cause = str(analysis.get("root_cause_hypothesis", "control execution variance"))[:500]
+        root_cause_code = str(analysis.get("root_cause_code", ""))[:100]
         bounded_recommendation = str(analysis.get("recommended_action", "INVESTIGATE"))
         analysis_evidence_ids = [str(value) for value in analysis.get("supporting_evidence_ids", [])]
         cited_items = {item.evidence_id: item for item in evidence}
@@ -1315,7 +1316,7 @@ class GovernedWorkflow:
                 case_id=str(row.case_id),
                 action_type="propose_case_update",
                 payload={"status": "investigated"},
-                workflow_version="agent-graph-v3",
+                workflow_version="agent-graph-v4",
             )
             action_id = pending.action_id
         if (
@@ -1336,7 +1337,7 @@ class GovernedWorkflow:
                 case_id=str(row.case_id),
                 action_type="propose_case_update",
                 payload=payload,
-                workflow_version="agent-graph-v3",
+                workflow_version="agent-graph-v4",
                 policy_version="local-policy-v1",
                 evidence_hash=evidence_hash,
                 risk_tier=1,
@@ -1348,7 +1349,7 @@ class GovernedWorkflow:
                     case_id=str(row.case_id),
                     action_type="propose_case_update",
                     payload=payload,
-                    workflow_version="agent-graph-v3",
+                    workflow_version="agent-graph-v4",
                     authorization_token=token,
                     approval_authority=self.authority,
                     evidence_hash=evidence_hash,
@@ -1401,6 +1402,7 @@ class GovernedWorkflow:
             item.evidence_id: {"source": item.source, "content_sha256": item.content_sha256} for item in evidence
         }
         state.case_context["llm_analysis"] = {
+            "root_cause_code": root_cause_code,
             "root_cause_hypothesis": root_cause,
             "recommended_action": bounded_recommendation,
             "analysis_hash": analysis_hash,

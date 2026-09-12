@@ -12,6 +12,7 @@ from typing import Any, Generic, TypeVar, cast
 from pydantic import BaseModel
 
 from controlflow.authorization.policy import LocalPolicyBackend, ToolPolicyInput
+from controlflow.core.resources import register_tool_worker, unregister_tool_worker
 from controlflow.core.state import canonical_json
 from controlflow.schemas import AuthorizationOutcome, IdentityContext, Severity
 from controlflow.tools.deadline import (
@@ -155,6 +156,7 @@ class ToolRegistry:
                 finally:
                     reset_tool_deadline(token)
                     _TOOL_WORKER_SLOTS.release()
+                    unregister_tool_worker()
 
             if not _TOOL_WORKER_SLOTS.acquire(blocking=False):
                 self._audit(
@@ -168,11 +170,13 @@ class ToolRegistry:
                     },
                 )
                 raise RuntimeError("tool worker capacity exhausted; circuit breaker is open")
+            register_tool_worker()
             worker = Thread(target=run_implementation, name=f"controlflow-tool-{name}", daemon=True)
             try:
                 worker.start()
             except Exception:
                 _TOOL_WORKER_SLOTS.release()
+                unregister_tool_worker()
                 raise
             try:
                 try:

@@ -18,6 +18,11 @@ def test_invalid_governed_claims_can_be_deterministically_rescored() -> None:
                 "llm_analysis_supported": True,
                 "llm_analysis_support_checked": True,
                 "safe_task_completion": True,
+                "nominal_success": True,
+                "evidence_correct": True,
+                "temporal_correct": True,
+                "authorization_correct": True,
+                "structured_output_valid": True,
             },
             {
                 "architecture_mode": "rules",
@@ -25,12 +30,17 @@ def test_invalid_governed_claims_can_be_deterministically_rescored() -> None:
                 "llm_analysis_supported": False,
                 "llm_analysis_support_checked": False,
                 "safe_task_completion": True,
+                "nominal_success": True,
+                "evidence_correct": True,
+                "temporal_correct": True,
+                "authorization_correct": True,
+                "structured_output_valid": True,
             },
         ]
     )
     result = _rescore_traces(frame)
-    assert result.root_cause_correct.tolist() == [False, True]
-    assert result.safe_task_completion.tolist() == [False, True]
+    assert result.root_cause_correct.tolist() == [False, False]
+    assert result.safe_task_completion.tolist() == [True, True]
     assert "llm_analysis_evidence_valid" in result
 
 
@@ -94,6 +104,7 @@ def test_final_checkpoint_schema_accepts_actual_evaluator_record() -> None:
         "output_tokens": 1.0,
         "architecture_mode": "governed",
         "analysis_valid": True,
+        "root_cause_code": "missing_evidence",
         "root_cause_hypothesis": "Required evidence is unavailable",
         "recommended_action": "REQUEST_EVIDENCE",
     }

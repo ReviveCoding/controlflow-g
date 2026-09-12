@@ -78,7 +78,7 @@ def create_freeze() -> str:
         "llm_model": "Qwen/Qwen2.5-0.5B-Instruct",
         "llm_revision": "7ae557604adf67be50417f59c2c2f167def9a775",
         "embedding_revision": "1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
-        "agent_graph_version": "agent-graph-v3",
+        "agent_graph_version": "agent-graph-v4",
         "authorization_policy_version": "local-policy-v1",
         "tool_schema_version": 1,
         "seeds": [17],

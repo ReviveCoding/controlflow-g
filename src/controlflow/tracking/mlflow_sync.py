@@ -52,7 +52,7 @@ def run() -> str:
                 mlflow.set_tags(
                     {
                         "llm_revision": "7ae557604adf67be50417f59c2c2f167def9a775",
-                        "agent_graph_version": "agent-graph-v3",
+                        "agent_graph_version": "agent-graph-v4",
                         "tool_schema_version": "1",
                         "authorization_policy_version": "local-policy-v1",
                     }

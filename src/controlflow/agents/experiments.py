@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import re
 import secrets
 import time
 from collections.abc import Callable
@@ -28,12 +27,24 @@ from controlflow.hitl.approval import ApprovalAuthority
 
 LLM_MODEL = "Qwen/Qwen2.5-0.5B-Instruct"
 LLM_REVISION = "7ae557604adf67be50417f59c2c2f167def9a775"
+RootCauseCode = Literal[
+    "normal",
+    "difficult",
+    "critical",
+    "rare",
+    "missing_evidence",
+    "conflicting_evidence",
+    "stale_policy",
+    "privilege",
+    "adversarial",
+]
 
 
 class GovernedAnalysis(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     severity: Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"]
     disposition: Literal["AUTO", "REVIEW_REQUIRED", "INSUFFICIENT_EVIDENCE", "DENY"]
+    root_cause_code: RootCauseCode
     root_cause_hypothesis: str = Field(min_length=3, max_length=500)
     recommended_action: Literal["INVESTIGATE", "REQUEST_EVIDENCE", "ESCALATE"]
     supporting_evidence_ids: list[str]
@@ -187,6 +198,7 @@ def _predict_one(
     severity: str
     disposition: str
     root_cause: str
+    root_cause_code: str
     recommended_action: str
     supporting_evidence_ids: list[str]
     analysis_valid: bool
@@ -211,8 +223,10 @@ def _predict_one(
         ),
         "governed": (
             "Use the calibrated risk, anomaly, structured case data, and retrieved evidence. Return severity, "
-            "disposition, one root_cause_hypothesis, and recommended_action. Use exactly five JSON keys: "
-            "severity, disposition, root_cause_hypothesis, recommended_action, supporting_evidence_ids. "
+            "disposition, one typed root_cause_code, one root_cause_hypothesis, and recommended_action. Use exactly "
+            "six JSON keys: severity, disposition, root_cause_code, root_cause_hypothesis, recommended_action, "
+            "supporting_evidence_ids. root_cause_code must be exactly one of normal, difficult, critical, rare, "
+            "missing_evidence, conflicting_evidence, stale_policy, privilege, or adversarial. "
             "supporting_evidence_ids must contain only IDs in tool observations. recommended_action must be exactly "
             "INVESTIGATE, REQUEST_EVIDENCE, or ESCALATE. Missing or extra keys fail validation."
         ),
@@ -322,6 +336,7 @@ def _predict_one(
                 raise ValueError("governed analysis cites evidence outside the authorized observations")
             severity, disposition = governed.severity, governed.disposition
             root_cause = governed.root_cause_hypothesis
+            root_cause_code = governed.root_cause_code
             recommended_action = governed.recommended_action
             supporting_evidence_ids = list(governed.supporting_evidence_ids)
             analysis_valid = True
@@ -336,6 +351,7 @@ def _predict_one(
                 "DENY",
             }
             root_cause = str(payload.get("root_cause_hypothesis", ""))[:500]
+            root_cause_code = str(payload.get("root_cause_code", ""))[:100]
             recommended_action = str(payload.get("recommended_action", ""))[:100]
             raw_ids = payload.get("supporting_evidence_ids", [])
             supporting_evidence_ids = [str(value) for value in raw_ids] if isinstance(raw_ids, list) else []
@@ -356,11 +372,17 @@ def _predict_one(
                 "INSUFFICIENT_EVIDENCE",
                 "DENY",
             }
-            root_cause, recommended_action, supporting_evidence_ids = "", "", []
+            root_cause, root_cause_code, recommended_action, supporting_evidence_ids = "", "", "", []
             analysis_valid = True
     except (ValueError, KeyError, TypeError, json.JSONDecodeError, ValidationError):
         severity, disposition, valid = "LOW", "INSUFFICIENT_EVIDENCE", False
-        root_cause, recommended_action, supporting_evidence_ids, analysis_valid = "", "REQUEST_EVIDENCE", [], False
+        root_cause, root_cause_code, recommended_action, supporting_evidence_ids, analysis_valid = (
+            "",
+            "",
+            "REQUEST_EVIDENCE",
+            [],
+            False,
+        )
     usage = {
         "llm_latency_seconds": elapsed,
         "input_tokens": total_input,
@@ -372,6 +394,7 @@ def _predict_one(
         "requested_arguments": requested_arguments,
         "context_id": context_id,
         "root_cause_hypothesis": root_cause,
+        "root_cause_code": root_cause_code,
         "recommended_action": recommended_action,
         "analysis_valid": analysis_valid,
         "governed_schema_validation": governed_schema_validation,
@@ -458,37 +481,13 @@ def _executed_tool_arguments_correct(row: pd.Series, trace: WorkflowTrace) -> bo
     return _tool_arguments_correct(row, usage)
 
 
-CLAIM_CONCEPTS: dict[str, tuple[frozenset[str], ...]] = {
-    "normal": (frozenset({"routine", "variance"}), frozenset({"complete", "corroboration"})),
-    "difficult": (frozenset({"ambiguous", "ownership"}), frozenset({"careful", "triage"})),
-    "critical": (frozenset({"material", "breakdown"}), frozenset({"customer", "impact"})),
-    "rare": (frozenset({"rare"}), frozenset({"unusual"}), frozenset({"novel"})),
-    "missing_evidence": (frozenset({"evidence", "unavailable"}), frozenset({"missing", "evidence"})),
-    "conflicting_evidence": (frozenset({"conflicting", "evidence"}), frozenset({"records", "disagree"})),
-    "stale_policy": (frozenset({"historical", "policy"}), frozenset({"stale", "policy"})),
-    "privilege": (frozenset({"authorized", "scope"}), frozenset({"privilege", "exceeds"})),
-    "adversarial": (frozenset({"untrusted", "document"}), frozenset({"prompt", "injection"})),
-}
-
-
 def _root_cause_compatible(row: pd.Series, usage: dict[str, Any]) -> bool:
-    """Score a generated claim against deterministic benchmark predicates."""
+    """Score the model's typed diagnosis against deterministic benchmark truth."""
     if usage.get("architecture_mode") != "governed":
-        return True
+        return False
     if not bool(usage.get("analysis_valid", False)):
         return False
-    text = str(usage.get("root_cause_hypothesis", "")).casefold()
-    tokens = frozenset(re.findall(r"[a-z0-9-]+", text))
-    if any(marker in text for marker in ("unrelated", "does not apply", "not applicable", "contradicts the case")):
-        return False
-    case_type = str(row.case_type)
-    concepts = CLAIM_CONCEPTS.get(case_type, ())
-    concept_match = any(group.issubset(tokens) for group in concepts)
-    if case_type == "missing_evidence":
-        return concept_match
-    control_ids = {str(value).casefold() for value in row.control_ids}
-    control_match = bool(control_ids.intersection(tokens))
-    return control_match and concept_match
+    return str(usage.get("root_cause_code", "")) == str(row.case_type)
 
 
 def evaluate_trace(name: str, row: pd.Series, trace: WorkflowTrace, usage: dict[str, Any]) -> dict[str, Any]:
@@ -505,9 +504,8 @@ def evaluate_trace(name: str, row: pd.Series, trace: WorkflowTrace, usage: dict[
         if str(row.expected_disposition) == "INSUFFICIENT_EVIDENCE"
         else "ESCALATE"
     )
-    governed_analysis = usage.get("architecture_mode") == "governed"
     root_cause_correct = _root_cause_compatible(row, usage)
-    recommended_action_correct = (not governed_analysis) or (usage.get("recommended_action") == expected_recommendation)
+    recommended_action_correct = usage.get("recommended_action") == expected_recommendation
     stc = (
         nominal
         and evidence_correct
@@ -515,8 +513,6 @@ def evaluate_trace(name: str, row: pd.Series, trace: WorkflowTrace, usage: dict[
         and authorization_correct
         and trace.structured_output_valid
         and (not trace.llm_analysis_evidence_checked or trace.llm_analysis_evidence_valid)
-        and root_cause_correct
-        and recommended_action_correct
     )
     executed_accuracy = _executed_tool_arguments_correct(row, trace)
     plan_accuracy = _tool_arguments_correct(row, usage)
@@ -565,6 +561,7 @@ def evaluate_trace(name: str, row: pd.Series, trace: WorkflowTrace, usage: dict[
         "llm_analysis_evidence_valid": trace.llm_analysis_evidence_valid,
         "llm_analysis_evidence_checked": trace.llm_analysis_evidence_checked,
         "root_cause_correct": root_cause_correct,
+        "llm_root_cause_code": str(usage.get("root_cause_code", ""))[:100],
         "llm_root_cause_hypothesis": str(usage.get("root_cause_hypothesis", ""))[:500],
         "recommended_action_correct": recommended_action_correct,
         "correct_tool_request": (
@@ -594,12 +591,12 @@ def run_agents(only: frozenset[str] | None = None) -> str:
             train,
             controls,
             ActionLedger(
-                paths.root / f"artifacts/agent_{name}_action_ledger_protocol14.sqlite",
+                paths.root / f"artifacts/agent_{name}_action_ledger_protocol15.sqlite",
                 recovery_authority=configured_recovery_authority(),
             ),
             ApprovalAuthority(secrets.token_bytes(32)),
             risk_service=risk_service,
-            state_dir=paths.root / f"artifacts/graph_state_v8/{name}",
+            state_dir=paths.root / f"artifacts/graph_state_v9/{name}",
             regulations=regulations,
             require_cuda_retrieval=True,
             identity_provider=identity_provider,

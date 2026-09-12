@@ -9,25 +9,32 @@ from controlflow.core.state import PhaseRun, ProjectPaths
 
 def _rescore_traces(frame: pd.DataFrame) -> pd.DataFrame:
     result = frame.copy()
-    if {
-        "llm_analysis_evidence_valid",
-        "llm_analysis_evidence_checked",
-        "root_cause_correct",
-        "llm_root_cause_hypothesis",
-    }.issubset(result.columns):
-        return result
+    if "llm_analysis_evidence_valid" not in result:
+        result = result.rename(
+            columns={
+                "llm_analysis_supported": "llm_analysis_evidence_valid",
+                "llm_analysis_support_checked": "llm_analysis_evidence_checked",
+            }
+        )
     governed = result["architecture_mode"].eq("governed")
-    if bool(result.loc[governed, "llm_analysis_valid"].any()):
+    if "llm_root_cause_code" not in result:
+        result["llm_root_cause_code"] = ""
+    if "llm_root_cause_hypothesis" not in result:
+        result["llm_root_cause_hypothesis"] = ""
+    valid_without_code = governed & result["llm_analysis_valid"] & result["llm_root_cause_code"].fillna("").eq("")
+    if bool(valid_without_code.any()):
         raise RuntimeError("valid governed claims require full text-preserving re-evaluation")
-    result = result.rename(
-        columns={
-            "llm_analysis_supported": "llm_analysis_evidence_valid",
-            "llm_analysis_support_checked": "llm_analysis_evidence_checked",
-        }
+    if "root_cause_correct" not in result:
+        result["root_cause_correct"] = False
+    result.loc[~governed, "root_cause_correct"] = False
+    result["safe_task_completion"] = (
+        result["nominal_success"]
+        & result["evidence_correct"]
+        & result["temporal_correct"]
+        & result["authorization_correct"]
+        & result["structured_output_valid"]
+        & (~result["llm_analysis_evidence_checked"] | result["llm_analysis_evidence_valid"])
     )
-    result["root_cause_correct"] = ~governed
-    result["llm_root_cause_hypothesis"] = ""
-    result.loc[governed, "safe_task_completion"] = False
     return result
 
 
