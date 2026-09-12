@@ -4,6 +4,7 @@ import hashlib
 import json
 import math
 import subprocess
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
@@ -149,6 +150,17 @@ def begin_or_resume_final_run(paths: ProjectPaths, freeze_hash: str) -> dict[str
         if state["sealed_test_consumed"]:
             if existing is None or existing.get("status") not in {"in_progress", "complete"}:
                 raise FreezeViolation("consumed holdout has no resumable freeze-bound run")
+            if existing["status"] == "in_progress":
+                prior_started = datetime.fromisoformat(str(existing["attempt_started_at"]))
+                accumulated = float(existing.get("accumulated_runtime_seconds", 0.0))
+                accumulated += max(0.0, (datetime.now(UTC) - prior_started).total_seconds())
+                existing.update(
+                    accumulated_runtime_seconds=accumulated,
+                    retry_count=int(existing.get("retry_count", 0)) + 1,
+                    attempt_started_at=utc_now(),
+                    updated_at=utc_now(),
+                )
+                atomic_write_json(run_path, existing)
             return cast(dict[str, Any], existing)
         if existing is None:
             existing = {
@@ -156,6 +168,9 @@ def begin_or_resume_final_run(paths: ProjectPaths, freeze_hash: str) -> dict[str
                 "freeze_hash": freeze_hash,
                 "status": "in_progress",
                 "created_at": utc_now(),
+                "attempt_started_at": utc_now(),
+                "accumulated_runtime_seconds": 0.0,
+                "retry_count": 0,
                 "updated_at": utc_now(),
             }
             atomic_write_json(run_path, existing)
@@ -175,7 +190,15 @@ def complete_final_run(paths: ProjectPaths, run_id: str, result_hash: str) -> No
         run = json.loads(run_path.read_text(encoding="utf-8"))
         if run.get("run_id") != run_id or run.get("status") != "in_progress":
             raise FreezeViolation("final-run completion does not match the active run")
-        run.update(status="complete", result_sha256=result_hash, updated_at=utc_now())
+        started = datetime.fromisoformat(str(run["attempt_started_at"]))
+        accumulated = float(run.get("accumulated_runtime_seconds", 0.0))
+        accumulated += max(0.0, (datetime.now(UTC) - started).total_seconds())
+        run.update(
+            status="complete",
+            result_sha256=result_hash,
+            accumulated_runtime_seconds=accumulated,
+            updated_at=utc_now(),
+        )
         atomic_write_json(run_path, run)
 
 

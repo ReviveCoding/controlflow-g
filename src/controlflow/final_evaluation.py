@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import secrets
@@ -10,6 +11,7 @@ import joblib
 import pandas as pd
 import pyarrow.parquet as pq
 import torch
+from pydantic import BaseModel, ConfigDict, Field
 
 from controlflow.agents.experiments import (
     CONFIGS,
@@ -21,11 +23,12 @@ from controlflow.agents.experiments import (
     evaluate_trace,
 )
 from controlflow.agents.workflow import GovernedWorkflow
+from controlflow.audit.final_attestation import FinalRunAttestor, verify_final_run_outputs
 from controlflow.audit.ledger import ActionLedger
 from controlflow.audit.recovery import configured_recovery_authority
 from controlflow.authorization.identity import SessionIdentityProvider
 from controlflow.core.resources import GpuSemaphore
-from controlflow.core.state import PhaseRun, ProjectPaths, append_jsonl, sha256_file, utc_now
+from controlflow.core.state import PhaseRun, ProjectPaths, atomic_write_json, canonical_json, sha256_file, utc_now
 from controlflow.data.splits import load_split
 from controlflow.features.point_in_time import PIT_RAW_COLUMNS, attach_synthetic_pit_features
 from controlflow.hitl.approval import ApprovalAuthority
@@ -35,6 +38,19 @@ from controlflow.release import (
     evaluate_release_gates,
     verify_freeze,
 )
+
+
+class FinalCheckpointTrace(BaseModel):
+    model_config = ConfigDict(extra="allow", strict=True)
+    case_id: str
+    experiment_id: str
+    safe_task_completion: bool
+    predicted_severity: str
+    predicted_disposition: str
+    authorization_correct: bool
+    structured_output_valid: bool
+    latency_seconds: float = Field(ge=0, allow_inf_nan=False)
+    gpu_seconds: float = Field(ge=0, allow_inf_nan=False)
 
 
 def run_final_once() -> str:
@@ -52,9 +68,14 @@ def run_final_once() -> str:
     ActionLedger.probe_trust_store()
     final_run = begin_or_resume_final_run(paths, str(freeze["freeze_hash"]))
     if final_run["status"] == "complete":
+        verify_final_run_outputs(paths)
         completed_target = paths.root / "results/final_test.parquet"
-        if not completed_target.is_file() or sha256_file(completed_target) != final_run["result_sha256"]:
-            raise RuntimeError("completed final-run result failed integrity verification")
+        state = json.loads(paths.execution_state.read_text(encoding="utf-8"))
+        if "P26" not in state["completed_phases"]:
+            recovery_phase = PhaseRun("P26", paths)
+            with recovery_phase:
+                recovery_phase.register(paths.root / "results/final_test_traces.parquet", "sealed_evaluation_traces")
+                recovery_phase.register(completed_target, "sealed_result")
         return str(completed_target)
     phase = PhaseRun("P26", paths)
     phase.__enter__()
@@ -76,12 +97,12 @@ def run_final_once() -> str:
             development,
             controls,
             ActionLedger(
-                paths.root / f"artifacts/final_{name}_action_ledger_v8.sqlite",
+                paths.root / f"artifacts/final_{name}_action_ledger_v9.sqlite",
                 recovery_authority=configured_recovery_authority(),
             ),
             ApprovalAuthority(secrets.token_bytes(32)),
             risk_service=frozen_risk,
-            state_dir=paths.root / f"artifacts/final_graph_state_v3/{name}",
+            state_dir=paths.root / f"artifacts/final_graph_state_v4/{name}",
             regulations=regulations,
             require_cuda_retrieval=True,
             identity_provider=identity_provider,
@@ -89,28 +110,51 @@ def run_final_once() -> str:
         )
         for name in architecture_names
     }
-    checkpoint_target = paths.root / "results/final_test_checkpoint.jsonl"
+    attestor = FinalRunAttestor()
+    checkpoint_dir = paths.root / f"results/final_test_checkpoints/{final_run['run_id']}"
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    expected_work = {
+        f"{case_id}:{architecture}_final": (str(case_id), f"agent-{architecture}_final")
+        for case_id in cases.case_id.astype(str)
+        for architecture in architecture_names
+    }
     completed: dict[str, dict[str, object]] = {}
-    if checkpoint_target.exists():
-        for line in checkpoint_target.read_text(encoding="utf-8").splitlines():
-            record = json.loads(line)
-            if record["run_id"] != final_run["run_id"] or record["freeze_hash"] != freeze["freeze_hash"]:
-                raise RuntimeError("final checkpoint belongs to a different frozen run")
-            completed[str(record["work_id"])] = dict(record["trace"])
+    record_hashes: dict[str, str] = {}
+    for target in checkpoint_dir.glob("*.json"):
+        record = attestor.verify_envelope(json.loads(target.read_text(encoding="utf-8")))
+        work_id = str(record.get("work_id", ""))
+        if work_id not in expected_work:
+            raise RuntimeError("final checkpoint contains an unknown work ID")
+        if target.stem != hashlib.sha256(work_id.encode()).hexdigest():
+            raise RuntimeError("final checkpoint filename is not bound to its work ID")
+        expected_case, expected_experiment = expected_work[work_id]
+        trace = FinalCheckpointTrace.model_validate(record.get("trace", {})).model_dump()
+        if (
+            record.get("run_id") != final_run["run_id"]
+            or record.get("freeze_hash") != freeze["freeze_hash"]
+            or str(trace.get("case_id")) != expected_case
+            or str(trace.get("experiment_id")) != expected_experiment
+            or work_id in completed
+        ):
+            raise RuntimeError("final checkpoint identity or duplicate validation failed")
+        completed[work_id] = trace
+        record_hashes[work_id] = attestor.sign(record)
 
     def checkpoint(work_id: str, trace: dict[str, object]) -> None:
         normalized = json.loads(pd.DataFrame([trace]).to_json(orient="records", date_format="iso"))[0]
-        append_jsonl(
-            checkpoint_target,
-            {
-                "run_id": final_run["run_id"],
-                "freeze_hash": freeze["freeze_hash"],
-                "work_id": work_id,
-                "trace": normalized,
-                "completed_at": utc_now(),
-            },
-        )
+        payload = {
+            "run_id": final_run["run_id"],
+            "freeze_hash": freeze["freeze_hash"],
+            "work_id": work_id,
+            "trace": normalized,
+            "completed_at": utc_now(),
+        }
+        target = checkpoint_dir / f"{hashlib.sha256(work_id.encode()).hexdigest()}.json"
+        if target.exists():
+            raise RuntimeError("duplicate final checkpoint work ID")
+        atomic_write_json(target, attestor.envelope(payload))
         completed[work_id] = normalized
+        record_hashes[work_id] = attestor.sign(payload)
 
     started = time.perf_counter()
     with GpuSemaphore():
@@ -188,6 +232,20 @@ def run_final_once() -> str:
     traces = pd.DataFrame(completed.values()).sort_values(["case_id", "experiment_id"]).reset_index(drop=True)
     if len(traces) != len(cases) * len(architecture_names):
         raise RuntimeError("final evaluation checkpoint is incomplete")
+    if set(completed) != set(expected_work):
+        raise RuntimeError("final evaluation checkpoint work set is not exact")
+    checkpoint_payload = {
+        "run_id": final_run["run_id"],
+        "freeze_hash": freeze["freeze_hash"],
+        "count": len(record_hashes),
+        "records": dict(sorted(record_hashes.items())),
+    }
+    checkpoint_anchor = attestor.write_anchor(
+        f"final-checkpoints-{final_run['run_id']}.json",
+        checkpoint_payload,
+    )
+    if attestor.read_anchor(checkpoint_anchor.name) != checkpoint_payload:
+        raise RuntimeError("final checkpoint protected-head verification failed")
     candidate = traces[traces.experiment_id.eq("agent-AG6_controlflow_g_final")].reset_index(drop=True)
     truth = cases.set_index("case_id").loc[candidate.case_id]
     critical = truth.severity.eq("CRITICAL").to_numpy()
@@ -231,7 +289,9 @@ def run_final_once() -> str:
                 "hardware_runtime": "local-Windows-CUDA",
                 "timestamp": utc_now(),
                 "status": "valid",
-                "runtime_seconds": time.perf_counter() - started,
+                "runtime_seconds": float(final_run.get("accumulated_runtime_seconds", 0.0))
+                + (time.perf_counter() - started),
+                "retry_count": int(final_run.get("retry_count", 0)),
                 "metrics": json.dumps(metrics, sort_keys=True),
                 "gate_results": json.dumps(gates, sort_keys=True),
                 "release_decision": decision,
@@ -242,11 +302,23 @@ def run_final_once() -> str:
     trace_target = paths.root / "results/final_test_traces.parquet"
     traces.to_parquet(trace_target, index=False)
     result.to_parquet(target, index=False)
-    phase.register(checkpoint_target, "sealed_evaluation_checkpoint")
     phase.register(trace_target, "sealed_evaluation_traces")
     phase.register(target, "sealed_result")
-    complete_final_run(paths, str(final_run["run_id"]), sha256_file(target))
     phase.__exit__(None, None, None)
+    attestor.write_anchor(
+        f"final-result-{final_run['run_id']}.json",
+        {
+            "run_id": final_run["run_id"],
+            "freeze_hash": freeze["freeze_hash"],
+            "checkpoint_head": hashlib.sha256(canonical_json(checkpoint_payload)).hexdigest(),
+            "artifacts": {
+                "results/final_test.parquet": sha256_file(target),
+                "results/final_test_traces.parquet": sha256_file(trace_target),
+            },
+        },
+    )
+    complete_final_run(paths, str(final_run["run_id"]), sha256_file(target))
+    verify_final_run_outputs(paths)
     return str(target)
 
 

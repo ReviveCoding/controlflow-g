@@ -69,6 +69,7 @@ class ActionInput(BaseModel):
 class ActionOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     executed: bool
+    performed_this_invocation: bool
     action_id: int
 
 
@@ -170,6 +171,7 @@ class WorkflowTrace:
     human_review_requested: bool
     structured_output_valid: bool
     action_executed: bool
+    action_performed_this_invocation: bool
     action_id: int | None
     injection_detected: bool
     latency_seconds: float
@@ -226,6 +228,9 @@ class GovernedWorkflow:
         self._retriever_cache: dict[tuple[str, int, int, bool, bool], BM25Retriever | NeuralHybridRetriever] = {}
         self._context_observations: dict[tuple[str, str], dict[str, object]] = {}
         self._context_timings: dict[tuple[str, str], tuple[float, float]] = {}
+        self._context_tool_outputs: dict[tuple[str, str], dict[str, BaseModel]] = {}
+        self._context_evidence: dict[tuple[str, str], list[TemporalEvidence]] = {}
+        self._context_attempted_tools: dict[tuple[str, str], frozenset[str]] = {}
         origin = datetime(2020, 1, 1, tzinfo=UTC)
         self.evidence_corpus: list[TemporalEvidence] = []
         for control in controls.itertuples():
@@ -375,17 +380,24 @@ class GovernedWorkflow:
         )
 
         def search(kind: str) -> Callable[[EvidenceSearchInput], EvidenceSearchOutput]:
-            def invoke_search(_request: EvidenceSearchInput) -> EvidenceSearchOutput:
+            def invoke_search(request: EvidenceSearchInput) -> EvidenceSearchOutput:
                 nonlocal retrieval_executed
                 retrieval_executed = True
-                retrieved, _ = self._evidence(row, config, identity) if config.retrieval else ([], True)
+                query_row = row.copy()
+                query_row["narrative"] = request.query
+                retrieved, _ = self._evidence(query_row, config, identity) if config.retrieval else ([], True)
                 selected = [item for item in retrieved if (item.source == "NIST SP 800-53") == (kind == "controls")]
                 retrieved_by_tool.update({item.evidence_id: item for item in selected})
                 return EvidenceSearchOutput(evidence_ids=[item.evidence_id for item in selected])
 
             return invoke_search
 
-        def risk_tool(_request: CaseLookupInput) -> RiskToolOutput:
+        def require_current_case(request: CaseLookupInput) -> None:
+            if request.case_id != str(row.case_id):
+                raise PermissionError("case-scoped tool request does not match the active case")
+
+        def risk_tool(request: CaseLookupInput) -> RiskToolOutput:
+            require_current_case(request)
             probabilities, _ = self.risk.predict_details(feature_row, calibrated=config.calibration)
             return RiskToolOutput(
                 probabilities=probabilities.tolist(),
@@ -393,13 +405,15 @@ class GovernedWorkflow:
                 confidence=float(probabilities.max()),
             )
 
-        def anomaly_tool(_request: CaseLookupInput) -> AnomalyToolOutput:
+        def anomaly_tool(request: CaseLookupInput) -> AnomalyToolOutput:
+            require_current_case(request)
             _, score = self.risk.predict_details(feature_row, calibrated=config.calibration)
             return AnomalyToolOutput(
                 score=score, threshold=self.risk.anomaly_threshold, is_anomaly=score > self.risk.anomaly_threshold
             )
 
-        def search_cases(_request: CaseLookupInput) -> StructuredResult:
+        def search_cases(request: CaseLookupInput) -> StructuredResult:
+            require_current_case(request)
             query_terms = set(re.findall(r"[a-z0-9]+", str(row.narrative).casefold()))
             candidates = self.training.loc[
                 self.training["business_unit"].eq(identity.business_unit)
@@ -411,7 +425,8 @@ class GovernedWorkflow:
             identifiers = candidates.sort_values(["similarity", "event_timestamp"], ascending=False).head(5)["case_id"]
             return StructuredResult(values={"matching_case_ids": identifiers.astype(str).tolist()})
 
-        def policy_at_time(_request: CaseLookupInput) -> EvidenceSearchOutput:
+        def policy_at_time(request: CaseLookupInput) -> EvidenceSearchOutput:
+            require_current_case(request)
             event_time = pd.Timestamp(row.event_timestamp).to_pydatetime()
             return EvidenceSearchOutput(
                 evidence_ids=[
@@ -421,7 +436,8 @@ class GovernedWorkflow:
                 ]
             )
 
-        def query_case(_request: CaseLookupInput) -> StructuredResult:
+        def query_case(request: CaseLookupInput) -> StructuredResult:
+            require_current_case(request)
             return StructuredResult(
                 values={
                     "case_id": str(row.case_id),
@@ -432,7 +448,8 @@ class GovernedWorkflow:
                 }
             )
 
-        def query_transactions(_request: CaseLookupInput) -> StructuredResult:
+        def query_transactions(request: CaseLookupInput) -> StructuredResult:
+            require_current_case(request)
             classification = self.transactions.get(
                 "classification", pd.Series(0, index=self.transactions.index)
             ).astype(int)
@@ -451,7 +468,8 @@ class GovernedWorkflow:
                 }
             )
 
-        def evidence_bundle(_request: CaseLookupInput) -> EvidenceBundleOutput:
+        def evidence_bundle(request: CaseLookupInput) -> EvidenceBundleOutput:
+            require_current_case(request)
             identifiers = sorted(retrieved_by_tool)
             return EvidenceBundleOutput(
                 evidence_ids=identifiers,
@@ -636,7 +654,22 @@ class GovernedWorkflow:
         structured_context: dict[str, object] = {
             name: result.model_dump(mode="json") for name, result in auxiliary_results.items() if result is not None
         }
-        self._context_observations[(str(row.case_id), session_token)] = structured_context
+        cache_key = (str(row.case_id), session_token)
+        outputs = {
+            name: result
+            for name, result in {
+                "search_controls": control_result,
+                "search_regulations": regulation_result,
+                "compute_risk": risk_result,
+                "compute_anomaly": anomaly_result,
+                **auxiliary_results,
+            }.items()
+            if result is not None
+        }
+        self._context_observations[cache_key] = structured_context
+        self._context_tool_outputs[cache_key] = outputs
+        self._context_evidence[cache_key] = list(retrieved_by_tool.values())
+        self._context_attempted_tools[cache_key] = frozenset(enabled)
         context = json.dumps(
             {
                 "search_controls": [retrieved_by_tool[item].text[:300] for item in control_ids],
@@ -679,11 +712,16 @@ class GovernedWorkflow:
         resource_scope = self._enforce_resource_scope(row, identity)
         tool_calls: list[str] = []
         requested = set(llm_tool_requests) if llm_tool_requests is not None else None
+        duplicate_requests = len(llm_tool_requests or []) - len(requested or set())
         requested_arguments = {
             name: arguments for name, arguments in zip(llm_tool_requests or [], llm_tool_arguments or [], strict=False)
         }
-        tool_argument_errors = 0
-        structured_tool_results = dict(self._context_observations.get((str(row.case_id), session_token), {}))
+        cache_key = (str(row.case_id), session_token)
+        tool_argument_errors = max(0, duplicate_requests)
+        structured_tool_results = dict(self._context_observations.get(cache_key, {}))
+        cached_outputs = self._context_tool_outputs.get(cache_key, {})
+        cached_evidence = self._context_evidence.get(cache_key, [])
+        attempted_tools = self._context_attempted_tools.get(cache_key, frozenset())
         risk_requested = requested is None or bool(requested & {"compute_risk", "compute_anomaly"})
         retrieval_requested = requested is None or bool(
             requested
@@ -707,7 +745,12 @@ class GovernedWorkflow:
         else:
             feature_row["historical_failures"] = row["future_failures"]
 
-        def compute_risk(_request: CaseLookupInput) -> RiskToolOutput:
+        def require_current_case(request: CaseLookupInput) -> None:
+            if request.case_id != str(row.case_id):
+                raise PermissionError("case-scoped tool request does not match the active case")
+
+        def compute_risk(request: CaseLookupInput) -> RiskToolOutput:
+            require_current_case(request)
             probabilities, _anomaly_value = self.risk.predict_details(feature_row, calibrated=config.calibration)
             return RiskToolOutput(
                 probabilities=probabilities.tolist(),
@@ -715,7 +758,8 @@ class GovernedWorkflow:
                 confidence=float(probabilities.max()),
             )
 
-        def compute_anomaly(_request: CaseLookupInput) -> AnomalyToolOutput:
+        def compute_anomaly(request: CaseLookupInput) -> AnomalyToolOutput:
+            require_current_case(request)
             _probability_value, score = self.risk.predict_details(feature_row, calibrated=config.calibration)
             return AnomalyToolOutput(
                 score=score,
@@ -743,18 +787,24 @@ class GovernedWorkflow:
                 )
             )
         if config.ml_risk and risk_requested:
-            try:
-                risk_result = service_registry.invoke(
-                    "compute_risk",
-                    requested_arguments.get("compute_risk", {"case_id": str(row.case_id)}),
-                    identity=identity,
-                    scope=resource_scope,
-                    data_classification=int(row.get("data_sensitivity", 0)),
-                    severity=Severity.LOW,
-                )
-            except (ValidationError, PermissionError):
-                risk_result = None
-                tool_argument_errors += 1
+            if "compute_risk" in attempted_tools:
+                risk_result = cached_outputs.get("compute_risk")
+                if not isinstance(risk_result, RiskToolOutput):
+                    risk_result = None
+                    tool_argument_errors += 1
+            else:
+                try:
+                    risk_result = service_registry.invoke(
+                        "compute_risk",
+                        requested_arguments.get("compute_risk", {"case_id": str(row.case_id)}),
+                        identity=identity,
+                        scope=resource_scope,
+                        data_classification=int(row.get("data_sensitivity", 0)),
+                        severity=Severity.LOW,
+                    )
+                except (ValidationError, PermissionError):
+                    risk_result = None
+                    tool_argument_errors += 1
             if risk_result is None:
                 severity, confidence, anomaly_score = llm_severity, 0.5, 0.0
                 risk_requested = False
@@ -763,14 +813,19 @@ class GovernedWorkflow:
                 severity = str(risk_result.severity)  # type: ignore[attr-defined]
                 confidence = float(risk_result.confidence)  # type: ignore[attr-defined]
                 try:
-                    anomaly_result = service_registry.invoke(
-                        "compute_anomaly",
-                        requested_arguments.get("compute_anomaly", {"case_id": str(row.case_id)}),
-                        identity=identity,
-                        scope=resource_scope,
-                        data_classification=int(row.get("data_sensitivity", 0)),
-                        severity=Severity(severity),
-                    )
+                    if "compute_anomaly" in attempted_tools:
+                        anomaly_result = cached_outputs.get("compute_anomaly")
+                        if not isinstance(anomaly_result, AnomalyToolOutput):
+                            raise PermissionError("cached anomaly tool call was rejected")
+                    else:
+                        anomaly_result = service_registry.invoke(
+                            "compute_anomaly",
+                            requested_arguments.get("compute_anomaly", {"case_id": str(row.case_id)}),
+                            identity=identity,
+                            scope=resource_scope,
+                            data_classification=int(row.get("data_sensitivity", 0)),
+                            severity=Severity(severity),
+                        )
                     anomaly_score = float(anomaly_result.score)  # type: ignore[attr-defined]
                     if config.anomaly and bool(anomaly_result.is_anomaly):  # type: ignore[attr-defined]
                         severity = LABELS[min(3, LABELS.index(severity) + 1)]
@@ -794,10 +849,12 @@ class GovernedWorkflow:
             retrieved_materialized: dict[str, TemporalEvidence] = {}
 
             def evidence_search(selected_tool: str) -> Callable[[EvidenceSearchInput], EvidenceSearchOutput]:
-                def search(_request: EvidenceSearchInput) -> EvidenceSearchOutput:
+                def search(request: EvidenceSearchInput) -> EvidenceSearchOutput:
+                    query_row = row.copy()
+                    query_row["narrative"] = request.query
                     selected = [
                         item
-                        for item in self._evidence(row, config, identity)[0]
+                        for item in self._evidence(query_row, config, identity)[0]
                         if (
                             (selected_tool == "search_controls" and item.source == "NIST SP 800-53")
                             or (selected_tool == "search_regulations" and item.source != "NIST SP 800-53")
@@ -827,19 +884,25 @@ class GovernedWorkflow:
                     )
                 )
                 try:
-                    raw_arguments = requested_arguments.get(tool_name, {"query": str(row.narrative)})
-                    result = (
-                        registry.invoke(
-                            tool_name,
-                            raw_arguments,
-                            identity=identity,
-                            scope=resource_scope,
-                            data_classification=int(row.get("data_sensitivity", 0)),
-                            severity=Severity(severity),
+                    if tool_name in attempted_tools:
+                        result = cached_outputs.get(tool_name)
+                        if not isinstance(result, EvidenceSearchOutput):
+                            raise PermissionError("cached evidence tool call was rejected")
+                        retrieved_materialized.update({item.evidence_id: item for item in cached_evidence})
+                    else:
+                        raw_arguments = requested_arguments.get(tool_name, {"query": str(row.narrative)})
+                        result = (
+                            registry.invoke(
+                                tool_name,
+                                raw_arguments,
+                                identity=identity,
+                                scope=resource_scope,
+                                data_classification=int(row.get("data_sensitivity", 0)),
+                                severity=Severity(severity),
+                            )
+                            if config.authorization
+                            else evidence_search(tool_name)(EvidenceSearchInput.model_validate(raw_arguments))
                         )
-                        if config.authorization
-                        else evidence_search(tool_name)(EvidenceSearchInput.model_validate(raw_arguments))
-                    )
                     selected_ids = set(result.evidence_ids)  # type: ignore[attr-defined]
                     selected = [retrieved_materialized[item] for item in selected_ids]
                     evidence.extend(selected)
@@ -908,6 +971,16 @@ class GovernedWorkflow:
                     ),
                 ),
             )
+
+            def case_scoped(
+                implementation: Callable[[CaseLookupInput], BaseModel],
+            ) -> Callable[[CaseLookupInput], BaseModel]:
+                def invoke_scoped(request: CaseLookupInput) -> BaseModel:
+                    require_current_case(request)
+                    return implementation(request)
+
+                return invoke_scoped
+
             for tool_name, output_model, implementation in auxiliary_tools:
                 registry.register(
                     ToolSpec(
@@ -921,19 +994,24 @@ class GovernedWorkflow:
                         human_review_required=False,
                         timeout_seconds=2.0,
                         max_retries=1,
-                        implementation=implementation,
+                        implementation=case_scoped(implementation),
                     )
                 )
                 if requested is None or tool_name in requested:
                     try:
-                        auxiliary_result = registry.invoke(
-                            tool_name,
-                            requested_arguments.get(tool_name, {"case_id": str(row.case_id)}),
-                            identity=identity,
-                            scope=resource_scope,
-                            data_classification=int(row.get("data_sensitivity", 0)),
-                            severity=Severity(severity),
-                        )
+                        if tool_name in attempted_tools:
+                            auxiliary_result = cached_outputs.get(tool_name)
+                            if auxiliary_result is None:
+                                raise PermissionError("cached auxiliary tool call was rejected")
+                        else:
+                            auxiliary_result = registry.invoke(
+                                tool_name,
+                                requested_arguments.get(tool_name, {"case_id": str(row.case_id)}),
+                                identity=identity,
+                                scope=resource_scope,
+                                data_classification=int(row.get("data_sensitivity", 0)),
+                                severity=Severity(severity),
+                            )
                         structured_tool_results[tool_name] = auxiliary_result.model_dump(mode="json")
                         tool_calls.append(tool_name)
                     except (ValidationError, PermissionError):
@@ -1098,6 +1176,7 @@ class GovernedWorkflow:
         else:
             structured_valid = llm_valid
         action_executed = False
+        action_performed_this_invocation = False
         action_id = None
         if disposition == "REVIEW_REQUIRED" and config.tools_enabled and config.hitl and action_requested:
             pending = self.ledger.request_review(
@@ -1142,7 +1221,11 @@ class GovernedWorkflow:
                     approval_authority=self.authority,
                     evidence_hash=evidence_hash,
                 )
-                return ActionOutput(executed=receipt.executed, action_id=receipt.action_id)
+                return ActionOutput(
+                    executed=receipt.status == "EXECUTED",
+                    performed_this_invocation=receipt.executed,
+                    action_id=receipt.action_id,
+                )
 
             if config.authorization and config.bounded_tools:
                 action_registry = ToolRegistry(self.policy, self.ledger.record_system_event)
@@ -1169,11 +1252,16 @@ class GovernedWorkflow:
                     data_classification=int(row.get("data_sensitivity", 0)),
                     severity=Severity(severity),
                 )
-                receipt_executed, receipt_action_id = result.executed, result.action_id  # type: ignore[attr-defined]
+                receipt_executed = bool(result.executed)  # type: ignore[attr-defined]
+                receipt_performed = bool(result.performed_this_invocation)  # type: ignore[attr-defined]
+                receipt_action_id = int(result.action_id)  # type: ignore[attr-defined]
             else:
                 unrestricted = execute_action(ActionInput(case_id=str(row.case_id), status="investigated"))
-                receipt_executed, receipt_action_id = unrestricted.executed, unrestricted.action_id
+                receipt_executed = unrestricted.executed
+                receipt_performed = unrestricted.performed_this_invocation
+                receipt_action_id = unrestricted.action_id
             action_executed, action_id = receipt_executed, receipt_action_id
+            action_performed_this_invocation = receipt_performed
             tool_calls.append("propose_case_update")
         state.applicable_controls = [control_match.group(0)] if control_match else []
         state.applicable_regulations = [regulation_match.group(0)] if regulation_match else []
@@ -1215,6 +1303,10 @@ class GovernedWorkflow:
                 state.model_dump(mode="json"),
             )
         context_latency, context_gpu_seconds = self._context_timings.pop((str(row.case_id), session_token), (0.0, 0.0))
+        self._context_observations.pop(cache_key, None)
+        self._context_tool_outputs.pop(cache_key, None)
+        self._context_evidence.pop(cache_key, None)
+        self._context_attempted_tools.pop(cache_key, None)
         return WorkflowTrace(
             case_id=str(row.case_id),
             predicted_severity=severity,
@@ -1231,6 +1323,7 @@ class GovernedWorkflow:
             human_review_requested=human_review,
             structured_output_valid=structured_valid,
             action_executed=action_executed,
+            action_performed_this_invocation=action_performed_this_invocation,
             action_id=action_id,
             injection_detected=injection_detected,
             latency_seconds=context_latency + time.perf_counter() - started,

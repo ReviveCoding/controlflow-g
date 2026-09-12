@@ -108,7 +108,7 @@ def run() -> str:
     paths = ProjectPaths.discover()
     recovery_authority = configured_recovery_authority()
     ledger = ActionLedger(
-        paths.root / "artifacts/reliability_action_ledger_v10.sqlite",
+        paths.root / "artifacts/reliability_action_ledger_v11.sqlite",
         recovery_authority=recovery_authority,
     )
     authority = ApprovalAuthority(
@@ -166,7 +166,7 @@ def run() -> str:
                 detected, injected, status = recovery, True, "ok"
             elif failure in {"agent crash", "partial pipeline failure", "checkpoint recovery"}:
                 checkpoint = paths.root / f"build/fault-checkpoint-{index}.json"
-                workflow_ledger = paths.root / f"artifacts/reliability_workflow_v9_{index}.sqlite"
+                workflow_ledger = paths.root / f"artifacts/reliability_workflow_v10_{index}.sqlite"
                 process = subprocess.run(
                     [
                         sys.executable,

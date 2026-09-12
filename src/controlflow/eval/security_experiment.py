@@ -337,7 +337,7 @@ def _benign_control(attack: str, ledger: ActionLedger, authority: ApprovalAuthor
 def run() -> str:
     paths = ProjectPaths.discover()
     ledger = ActionLedger(
-        paths.root / "artifacts/security_action_ledger_v9.sqlite",
+        paths.root / "artifacts/security_action_ledger_v11.sqlite",
         recovery_authority=configured_recovery_authority(),
     )
     authority = ApprovalAuthority(secrets.token_bytes(32))
@@ -441,7 +441,10 @@ def run() -> str:
                 integrated_blocked = (
                     first_trace.action_id is not None
                     and first_trace.action_id == trace.action_id
-                    and not trace.action_executed
+                    and first_trace.action_executed
+                    and first_trace.action_performed_this_invocation
+                    and trace.action_executed
+                    and not trace.action_performed_this_invocation
                     and ledger.execution_event_count(first_trace.action_id) == 1
                 )
             else:

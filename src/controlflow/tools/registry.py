@@ -160,6 +160,19 @@ class ToolRegistry:
                         "duration_seconds": time.perf_counter() - started,
                     },
                 )
+            except PermissionError:
+                self._audit(
+                    identity,
+                    {
+                        **base_event,
+                        "attempt": attempt + 1,
+                        "authorization": "DENY",
+                        "status": "argument_scope_denied",
+                        "duration_seconds": time.perf_counter() - started,
+                    },
+                )
+                executor.shutdown(wait=True, cancel_futures=True)
+                raise
             except Exception as exc:
                 last_error = exc
                 self._audit(

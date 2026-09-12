@@ -307,6 +307,37 @@ def _selected_tool_context(
     )
 
 
+def _tool_arguments_correct(row: pd.Series, usage: dict[str, Any]) -> bool:
+    names = list(usage.get("requested_tools", []))
+    arguments = list(usage.get("requested_arguments", []))
+    if not names or len(names) != len(arguments) or len(names) != len(set(names)):
+        return False
+    case_tools = {
+        "compute_risk",
+        "compute_anomaly",
+        "search_cases",
+        "get_policy_at_time",
+        "query_case_data",
+        "query_transactions",
+        "generate_evidence_bundle",
+    }
+    for name, supplied in zip(names, arguments, strict=True):
+        if not isinstance(supplied, dict):
+            return False
+        if name in {"search_controls", "search_regulations"}:
+            if supplied != {"query": str(row.narrative)}:
+                return False
+        elif name in case_tools:
+            if supplied != {"case_id": str(row.case_id)}:
+                return False
+        elif name == "propose_case_update":
+            if supplied != {"case_id": str(row.case_id), "status": "investigated"}:
+                return False
+        else:
+            return False
+    return True
+
+
 def evaluate_trace(name: str, row: pd.Series, trace: WorkflowTrace, usage: dict[str, Any]) -> dict[str, Any]:
     required, retrieved = set(row.required_evidence), set(trace.retrieved_ids)
     evidence_correct = (not required and trace.predicted_disposition == "INSUFFICIENT_EVIDENCE") or required.issubset(
@@ -343,6 +374,7 @@ def evaluate_trace(name: str, row: pd.Series, trace: WorkflowTrace, usage: dict[
         "tool_calls": json.dumps(trace.tool_calls),
         "retrieved_ids": json.dumps(trace.retrieved_ids),
         "action_executed": trace.action_executed,
+        "action_performed_this_invocation": trace.action_performed_this_invocation,
         "human_review_requested": trace.human_review_requested,
         "injection_detected": trace.injection_detected,
         "latency_seconds": trace.latency_seconds + usage["llm_latency_seconds"],
@@ -354,11 +386,7 @@ def evaluate_trace(name: str, row: pd.Series, trace: WorkflowTrace, usage: dict[
         "llm_requested_tools": json.dumps(usage.get("requested_tools", []), sort_keys=True),
         "llm_requested_arguments": json.dumps(usage.get("requested_arguments", []), sort_keys=True),
         "tool_argument_errors": trace.tool_argument_errors,
-        "tool_argument_accuracy": float(
-            bool(usage.get("requested_tools", []))
-            and len(usage.get("requested_tools", [])) == len(usage.get("requested_arguments", []))
-            and trace.tool_argument_errors == 0
-        ),
+        "tool_argument_accuracy": float(_tool_arguments_correct(row, usage) and trace.tool_argument_errors == 0),
         "correct_tool_request": (
             bool(usage.get("requested_tools", []))
             and set(usage.get("requested_tools", [])).issubset(set(row.permitted_tools))
@@ -386,12 +414,12 @@ def run_agents(only: frozenset[str] | None = None) -> str:
             train,
             controls,
             ActionLedger(
-                paths.root / f"artifacts/agent_{name}_action_ledger_protocol9.sqlite",
+                paths.root / f"artifacts/agent_{name}_action_ledger_protocol10.sqlite",
                 recovery_authority=configured_recovery_authority(),
             ),
             ApprovalAuthority(secrets.token_bytes(32)),
             risk_service=risk_service,
-            state_dir=paths.root / f"artifacts/graph_state_v3/{name}",
+            state_dir=paths.root / f"artifacts/graph_state_v4/{name}",
             regulations=regulations,
             require_cuda_retrieval=True,
             identity_provider=identity_provider,

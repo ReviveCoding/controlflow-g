@@ -4,11 +4,13 @@ import json
 
 import pandas as pd
 
+from controlflow.audit.final_attestation import verify_final_run_outputs
 from controlflow.core.state import PhaseRun, ProjectPaths, canonical_json, sha256_file, utc_now
 
 
 def run() -> str:
     paths = ProjectPaths.discover()
+    verify_final_run_outputs(paths)
     final_path = paths.root / "results/final_test.parquet"
     final = pd.read_parquet(final_path).iloc[0]
     metrics = json.loads(final.metrics)

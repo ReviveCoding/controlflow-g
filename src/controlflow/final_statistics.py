@@ -6,11 +6,13 @@ import numpy as np
 import pandas as pd
 from scipy.stats import binomtest
 
+from controlflow.audit.final_attestation import verify_final_run_outputs
 from controlflow.core.state import PhaseRun, ProjectPaths, sha256_file, utc_now
 
 
 def run(seed: int = 17, repeats: int = 10_000) -> str:
     paths = ProjectPaths.discover()
+    verify_final_run_outputs(paths)
     trace_path = paths.root / "results/final_test_traces.parquet"
     traces = pd.read_parquet(trace_path)
     pivot = traces.pivot(index="case_id", columns="experiment_id", values="safe_task_completion").astype(bool)

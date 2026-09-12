@@ -7,6 +7,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import pandas as pd
 
+from controlflow.audit.final_attestation import verify_final_run_outputs
 from controlflow.core.state import PhaseRun, ProjectPaths, sha256_file, utc_now
 
 
@@ -494,6 +495,7 @@ def generate_documents(paths: ProjectPaths) -> list[Path]:
 
 def run() -> str:
     paths = ProjectPaths.discover()
+    verify_final_run_outputs(paths)
     with PhaseRun("P30", paths) as phase:
         figures = generate_figures(paths)
         documents = generate_documents(paths)

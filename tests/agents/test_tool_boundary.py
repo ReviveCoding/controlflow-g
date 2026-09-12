@@ -206,6 +206,68 @@ def test_agentic_context_executes_only_selected_tools(tmp_path: Path) -> None:
     assert "query_transactions" not in context
 
 
+def test_case_scoped_context_rejects_wrong_case_argument(tmp_path: Path) -> None:
+    controls = pd.read_parquet("data/staging/nist_controls_raw.parquet").head(1)
+    training = pd.DataFrame(
+        [{"case_id": "case", "entity_id": "entity", "business_unit": "consumer", "narrative": "exception"}]
+    )
+    provider, credentials = _sessions("consumer")
+    workflow = GovernedWorkflow(
+        training,
+        controls,
+        ActionLedger(tmp_path / "case-binding.sqlite"),
+        ApprovalAuthority(b"secret"),
+        risk_service=FakeRisk(),  # type: ignore[arg-type]
+        identity_provider=provider,
+    )
+    row = training.iloc[0].copy()
+    row["event_timestamp"] = pd.Timestamp("2025-01-01", tz="UTC")
+    row["pit_historical_failures"] = row["future_failures"] = 0
+    row["repeat_count"] = row["data_sensitivity"] = 0
+    context = json.loads(
+        workflow.context_for_llm(
+            row,
+            WorkflowConfig(reranker=False),
+            session_token=credentials["consumer"],
+            selected_tools=frozenset({"query_case_data"}),
+            selected_tool_arguments={"query_case_data": {"case_id": "other-case"}},
+        )
+    )
+    assert context["query_case_data"] == {"error": "argument_or_authorization_rejected"}
+
+
+def test_replayed_action_trace_reports_achieved_state_without_duplicate_side_effect(tmp_path: Path) -> None:
+    controls = pd.read_parquet("data/staging/nist_controls_raw.parquet").head(1)
+    row = pd.Series(
+        {
+            "case_id": "case",
+            "entity_id": "entity",
+            "business_unit": "consumer",
+            "narrative": "exception",
+            "event_timestamp": pd.Timestamp("2025-01-01", tz="UTC"),
+            "pit_historical_failures": 0,
+            "future_failures": 0,
+            "repeat_count": 0,
+            "data_sensitivity": 0,
+        }
+    )
+    provider, credentials = _sessions("consumer")
+    workflow = GovernedWorkflow(
+        pd.DataFrame([row]),
+        controls,
+        ActionLedger(tmp_path / "replay-trace.sqlite"),
+        ApprovalAuthority(b"secret"),
+        risk_service=FakeRisk(),  # type: ignore[arg-type]
+        identity_provider=provider,
+    )
+    config = WorkflowConfig(retrieval=False, ml_risk=False, anomaly=False, verifier=False, hitl=False)
+    token = credentials["consumer"]
+    first = workflow.execute(row, config, ("LOW", "AUTO", True), session_token=token)
+    second = workflow.execute(row, config, ("LOW", "AUTO", True), session_token=token)
+    assert first.action_executed and first.action_performed_this_invocation
+    assert second.action_executed and not second.action_performed_this_invocation
+
+
 def test_denied_or_malformed_tool_never_executes_implementation() -> None:
     called = False
 
