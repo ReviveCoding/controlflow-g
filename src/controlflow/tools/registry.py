@@ -155,8 +155,8 @@ class ToolRegistry:
                     current_outcome.put(("error", exc))
                 finally:
                     reset_tool_deadline(token)
-                    _TOOL_WORKER_SLOTS.release()
                     unregister_tool_worker()
+                    _TOOL_WORKER_SLOTS.release()
 
             if not _TOOL_WORKER_SLOTS.acquire(blocking=False):
                 self._audit(
@@ -170,7 +170,21 @@ class ToolRegistry:
                     },
                 )
                 raise RuntimeError("tool worker capacity exhausted; circuit breaker is open")
-            register_tool_worker()
+            try:
+                register_tool_worker()
+            except RuntimeError:
+                _TOOL_WORKER_SLOTS.release()
+                self._audit(
+                    identity,
+                    {
+                        **base_event,
+                        "attempt": attempt + 1,
+                        "authorization": authorization.outcome.value,
+                        "status": "worker_admission_quarantined",
+                        "duration_seconds": time.perf_counter() - started,
+                    },
+                )
+                raise
             worker = Thread(target=run_implementation, name=f"controlflow-tool-{name}", daemon=True)
             try:
                 worker.start()

@@ -619,6 +619,87 @@ def test_gpu_lease_remains_locked_until_timed_out_worker_exits(tmp_path: Path) -
         pass
 
 
+def test_worker_admission_cannot_race_gpu_scope_release(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    paths = ProjectPaths(tmp_path)
+    paths.state.mkdir(parents=True)
+    release_entered = Event()
+    allow_release = Event()
+    implementation_started = Event()
+    gpu = GpuSemaphore(paths)
+    original_release = gpu._lock.release
+
+    def blocked_release(*args: object, **kwargs: object) -> None:
+        release_entered.set()
+        assert allow_release.wait(timeout=2)
+        original_release(*args, **kwargs)
+
+    monkeypatch.setattr(gpu._lock, "release", blocked_release)
+
+    def owner() -> None:
+        with gpu:
+            pass
+
+    owner_thread = Thread(target=owner)
+    owner_thread.start()
+    assert release_entered.wait(timeout=1)
+
+    registry = ToolRegistry(LocalPolicyBackend())
+
+    def implementation(value: Probe) -> Probe:
+        implementation_started.set()
+        return value
+
+    registry.register(
+        ToolSpec(
+            "release_race",
+            Probe,
+            Probe,
+            0,
+            True,
+            frozenset({"Control Analyst"}),
+            frozenset({"consumer"}),
+            False,
+            1.0,
+            0,
+            implementation,
+        )
+    )
+    identity = IdentityContext(
+        user_id="analyst",
+        role="Control Analyst",
+        business_unit="consumer",
+        region="US",
+        clearance=1,
+        purpose="investigation",
+        session_id="session",
+    )
+    with pytest.raises(RuntimeError, match="admission gate"):
+        registry.invoke(
+            "release_race",
+            {"value": 1},
+            identity=identity,
+            scope="consumer",
+            data_classification=0,
+            severity=Severity.LOW,
+        )
+    assert registry.audit_events[-1]["status"] == "worker_admission_quarantined"
+    assert not implementation_started.is_set()
+    allow_release.set()
+    owner_thread.join(timeout=1)
+    assert not owner_thread.is_alive()
+    assert (
+        registry.invoke(
+            "release_race",
+            {"value": 2},
+            identity=identity,
+            scope="consumer",
+            data_classification=0,
+            severity=Severity.LOW,
+        ).value
+        == 2
+    )
+
+
 def test_timed_out_write_cannot_commit_later(tmp_path: Path) -> None:
     ledger = ActionLedger(tmp_path / "timeout-write.sqlite")
     authority = ApprovalAuthority(b"timeout-write-secret")

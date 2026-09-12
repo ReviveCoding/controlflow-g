@@ -14,13 +14,20 @@ from controlflow.core.state import ProjectPaths, atomic_write_json, utc_now
 
 _TOOL_WORKER_CONDITION = Condition()
 _ACTIVE_TOOL_WORKERS = 0
+_GPU_SCOPE_CLOSING = False
 
 
 def register_tool_worker() -> None:
     """Register work that may retain CUDA state beyond its caller deadline."""
     global _ACTIVE_TOOL_WORKERS
-    with _TOOL_WORKER_CONDITION:
+    if not _TOOL_WORKER_CONDITION.acquire(blocking=False):
+        raise RuntimeError("GPU/tool worker admission gate is busy; fail-closed retry required")
+    try:
+        if _GPU_SCOPE_CLOSING:
+            raise RuntimeError("GPU scope is closing; tool worker admission denied")
         _ACTIVE_TOOL_WORKERS += 1
+    finally:
+        _TOOL_WORKER_CONDITION.release()
 
 
 def unregister_tool_worker() -> None:
@@ -63,17 +70,27 @@ class GpuSemaphore(AbstractContextManager["GpuSemaphore"]):
         return self
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> Literal[False]:
+        global _GPU_SCOPE_CLOSING
         # A timed-out tool runs in a quarantined daemon thread. It can still own
         # CUDA allocations after its caller returns, so do not advertise the
         # physical GPU as available to another process until that worker exits.
-        wait_for_tool_workers()
-        if self.acquired and self.owner_path.exists():
-            record = json.loads(self.owner_path.read_text(encoding="utf-8"))
-            if record.get("owner_token") == self.owner_token:
-                self.owner_path.unlink()
-        if self.acquired:
-            self._lock.release()
-        self.acquired = False
+        # Admission, drain, and file-lock release form one critical section so
+        # a new child worker cannot enter the drain-to-release gap.
+        with _TOOL_WORKER_CONDITION:
+            _GPU_SCOPE_CLOSING = True
+            try:
+                while _ACTIVE_TOOL_WORKERS:
+                    _TOOL_WORKER_CONDITION.wait()
+                if self.acquired and self.owner_path.exists():
+                    record = json.loads(self.owner_path.read_text(encoding="utf-8"))
+                    if record.get("owner_token") == self.owner_token:
+                        self.owner_path.unlink()
+                if self.acquired:
+                    self._lock.release()
+                self.acquired = False
+            finally:
+                _GPU_SCOPE_CLOSING = False
+                _TOOL_WORKER_CONDITION.notify_all()
         return False
 
 

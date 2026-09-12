@@ -71,3 +71,11 @@
 - AG6 was rerun on its 80 validation cases; all 15 ablations were rerun on 1,200 paired traces. AG6 and all ablations retain STC `0.0`; the adverse result is preserved.
 - P19 retained 15/15 blocked attacks and zero successes. P20 now explicitly measures quarantine drain recovery and records 12/12 detected recoveries with zero duplicate execution. Dependent P21 business and P23 statistical artifacts were regenerated.
 - Exact clean-export validation and repeat-15 independent review are required before P24 completion.
+
+## 2026-09-12 repeat-15 pre-final repair
+
+- Final holdout remains sealed (`sealed_test_consumed=false`); P25/P26 were not invoked.
+- Repeat-15 methodology and security reviews passed. The correctness HIGH drain-to-release race was classified `VALID`; see `reports/reviews/p24_repeat15_dispositions.md`.
+- GPU-scope closure now atomically closes worker admission, drains existing workers, and releases the cross-process file lock under one shared condition. Admission during closure fails closed and is audited; a deterministic race regression proves the implementation cannot start in the former gap.
+- P19/P20 were regenerated after repair: 15/15 attacks blocked with zero success; 12/12 detected recoveries with zero duplicate execution.
+- Exact clean-export validation and repeat-16 independent review are required before P24 completion.
