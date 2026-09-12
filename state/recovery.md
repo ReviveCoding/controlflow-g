@@ -49,3 +49,14 @@
 - No-verifier and no-structured-output ablations now causally remove their named checks and include those modes in cache identity.
 - P16/P17, P19, P20, P21, P22, and P23 were regenerated. AG6 validation remains adverse at STC `0.0`; all 15 ablation estimates remain `0.0` and are retained as a floor/null result.
 - Full source checks pass: Ruff, strict mypy (74 files), and pytest (71 tests). Exact-export and independent repeat-13 review remain required before P24 completion.
+
+## 2026-09-12 repeat-13 pre-final repair
+
+- Final holdout remains sealed (`sealed_test_consumed=false`); P25/P26 were not invoked.
+- Repeat-13 correctness BLOCKER and correctness/methodology/security HIGH findings were all classified `VALID`; see `reports/reviews/p24_repeat13_dispositions.md`.
+- The strict P26 checkpoint schema now has parity with actual evaluator records, including recommendation and root-cause correctness.
+- Tool timeout admission is process-wide and single-slot: a timed-out worker opens a fail-closed circuit until it exits, preventing overlap. The commit permit covers database commit plus signed-anchor synchronization.
+- Evidence provenance/time/authorization/hash validity is no longer labeled semantic support. Deterministic benchmark predicates independently score substantive root-cause correctness, which gates governed STC together with expected-action correctness.
+- Because every recorded governed analysis was already schema-invalid, P17/P22 were deterministically rescored with a fail-closed precondition instead of rerunning unchanged LLM inference. Future executions persist bounded root-cause text and use fresh checkpoint versions.
+- P20, P21, and P23 were regenerated. AG6 and every ablation retain STC `0.0`; the adverse floor is not hidden.
+- Exact-export checks and independent repeat-14 review remain required before P24 completion.

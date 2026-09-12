@@ -17,12 +17,13 @@ class ToolDeadlineLease:
     deadline: float
     cancelled: Event = field(default_factory=Event)
     _commit_permit: Lock = field(default_factory=Lock)
+    _commit_started: bool = False
     _commit_completed: bool = False
 
     def cancel(self) -> bool:
         """Cancel future commits and report whether one already completed."""
         with self._commit_permit:
-            committed = self._commit_completed
+            committed = self._commit_started
             self.cancelled.set()
             return committed
 
@@ -40,8 +41,14 @@ class ToolDeadlineLease:
         """Serialize the irreversible commit with caller-side cancellation."""
         with self._commit_permit:
             self.assert_active()
-            yield
-            self._commit_completed = True
+            self._commit_started = True
+            try:
+                yield
+            finally:
+                # Once an irreversible commit zone starts, the caller must
+                # reconcile it even when anchor export or result delivery
+                # fails. Cancellation waits on this permit.
+                self._commit_completed = True
 
 
 _CURRENT_LEASE: ContextVar[ToolDeadlineLease | None] = ContextVar("controlflow_tool_deadline", default=None)

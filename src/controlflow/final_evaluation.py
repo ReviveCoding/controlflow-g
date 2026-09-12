@@ -82,8 +82,11 @@ class FinalCheckpointTrace(BaseModel):
     llm_plan_argument_accuracy: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
     llm_analysis_hash: str
     llm_analysis_valid: bool
-    llm_analysis_supported: bool
-    llm_analysis_support_checked: bool
+    llm_analysis_evidence_valid: bool
+    llm_analysis_evidence_checked: bool
+    root_cause_correct: bool
+    llm_root_cause_hypothesis: str = Field(max_length=500)
+    recommended_action_correct: bool
     correct_tool_request: bool
 
 

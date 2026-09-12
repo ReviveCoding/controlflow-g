@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import secrets
 import time
 from collections.abc import Callable
@@ -457,6 +458,39 @@ def _executed_tool_arguments_correct(row: pd.Series, trace: WorkflowTrace) -> bo
     return _tool_arguments_correct(row, usage)
 
 
+CLAIM_CONCEPTS: dict[str, tuple[frozenset[str], ...]] = {
+    "normal": (frozenset({"routine", "variance"}), frozenset({"complete", "corroboration"})),
+    "difficult": (frozenset({"ambiguous", "ownership"}), frozenset({"careful", "triage"})),
+    "critical": (frozenset({"material", "breakdown"}), frozenset({"customer", "impact"})),
+    "rare": (frozenset({"rare"}), frozenset({"unusual"}), frozenset({"novel"})),
+    "missing_evidence": (frozenset({"evidence", "unavailable"}), frozenset({"missing", "evidence"})),
+    "conflicting_evidence": (frozenset({"conflicting", "evidence"}), frozenset({"records", "disagree"})),
+    "stale_policy": (frozenset({"historical", "policy"}), frozenset({"stale", "policy"})),
+    "privilege": (frozenset({"authorized", "scope"}), frozenset({"privilege", "exceeds"})),
+    "adversarial": (frozenset({"untrusted", "document"}), frozenset({"prompt", "injection"})),
+}
+
+
+def _root_cause_compatible(row: pd.Series, usage: dict[str, Any]) -> bool:
+    """Score a generated claim against deterministic benchmark predicates."""
+    if usage.get("architecture_mode") != "governed":
+        return True
+    if not bool(usage.get("analysis_valid", False)):
+        return False
+    text = str(usage.get("root_cause_hypothesis", "")).casefold()
+    tokens = frozenset(re.findall(r"[a-z0-9-]+", text))
+    if any(marker in text for marker in ("unrelated", "does not apply", "not applicable", "contradicts the case")):
+        return False
+    case_type = str(row.case_type)
+    concepts = CLAIM_CONCEPTS.get(case_type, ())
+    concept_match = any(group.issubset(tokens) for group in concepts)
+    if case_type == "missing_evidence":
+        return concept_match
+    control_ids = {str(value).casefold() for value in row.control_ids}
+    control_match = bool(control_ids.intersection(tokens))
+    return control_match and concept_match
+
+
 def evaluate_trace(name: str, row: pd.Series, trace: WorkflowTrace, usage: dict[str, Any]) -> dict[str, Any]:
     required, retrieved = set(row.required_evidence), set(trace.retrieved_ids)
     evidence_correct = (not required and trace.predicted_disposition == "INSUFFICIENT_EVIDENCE") or required.issubset(
@@ -472,6 +506,7 @@ def evaluate_trace(name: str, row: pd.Series, trace: WorkflowTrace, usage: dict[
         else "ESCALATE"
     )
     governed_analysis = usage.get("architecture_mode") == "governed"
+    root_cause_correct = _root_cause_compatible(row, usage)
     recommended_action_correct = (not governed_analysis) or (usage.get("recommended_action") == expected_recommendation)
     stc = (
         nominal
@@ -479,7 +514,8 @@ def evaluate_trace(name: str, row: pd.Series, trace: WorkflowTrace, usage: dict[
         and trace.temporal_correct
         and authorization_correct
         and trace.structured_output_valid
-        and (not trace.llm_analysis_support_checked or trace.llm_analysis_supported)
+        and (not trace.llm_analysis_evidence_checked or trace.llm_analysis_evidence_valid)
+        and root_cause_correct
         and recommended_action_correct
     )
     executed_accuracy = _executed_tool_arguments_correct(row, trace)
@@ -526,8 +562,10 @@ def evaluate_trace(name: str, row: pd.Series, trace: WorkflowTrace, usage: dict[
         "llm_plan_argument_accuracy": float(plan_accuracy) if plan_accuracy is not None else None,
         "llm_analysis_hash": trace.llm_analysis_hash,
         "llm_analysis_valid": trace.llm_analysis_valid,
-        "llm_analysis_supported": trace.llm_analysis_supported,
-        "llm_analysis_support_checked": trace.llm_analysis_support_checked,
+        "llm_analysis_evidence_valid": trace.llm_analysis_evidence_valid,
+        "llm_analysis_evidence_checked": trace.llm_analysis_evidence_checked,
+        "root_cause_correct": root_cause_correct,
+        "llm_root_cause_hypothesis": str(usage.get("root_cause_hypothesis", ""))[:500],
         "recommended_action_correct": recommended_action_correct,
         "correct_tool_request": (
             bool(usage.get("requested_tools", []))
@@ -556,12 +594,12 @@ def run_agents(only: frozenset[str] | None = None) -> str:
             train,
             controls,
             ActionLedger(
-                paths.root / f"artifacts/agent_{name}_action_ledger_protocol13.sqlite",
+                paths.root / f"artifacts/agent_{name}_action_ledger_protocol14.sqlite",
                 recovery_authority=configured_recovery_authority(),
             ),
             ApprovalAuthority(secrets.token_bytes(32)),
             risk_service=risk_service,
-            state_dir=paths.root / f"artifacts/graph_state_v7/{name}",
+            state_dir=paths.root / f"artifacts/graph_state_v8/{name}",
             regulations=regulations,
             require_cuda_retrieval=True,
             identity_provider=identity_provider,
@@ -730,7 +768,8 @@ def run_agents(only: frozenset[str] | None = None) -> str:
                     else None
                 ),
                 "llm_analysis_valid_rate": float(group.llm_analysis_valid.mean()),
-                "llm_analysis_supported_rate": float(group.llm_analysis_supported.mean()),
+                "llm_analysis_evidence_valid_rate": float(group.llm_analysis_evidence_valid.mean()),
+                "root_cause_correct_rate": float(group.root_cause_correct.mean()),
                 "tool_argument_error_rate": float(group.tool_argument_errors.gt(0).mean()),
                 "p50_latency_seconds": float(group.latency_seconds.quantile(0.5)),
                 "p95_latency_seconds": float(group.latency_seconds.quantile(0.95)),

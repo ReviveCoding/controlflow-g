@@ -424,7 +424,7 @@ class ActionLedger:
             )
             with tool_commit_section():
                 connection.execute("COMMIT")
-        self._sync_action_anchor()
+                self._sync_action_anchor()
         return ActionReceipt(action_id, str(row[0]), "ROLLED_BACK", executed=False)
 
     @ledger_locked
@@ -486,7 +486,7 @@ class ActionLedger:
                     assert_tool_deadline_active()
                     with tool_commit_section():
                         connection.execute("COMMIT")
-                    self._sync_action_anchor()
+                        self._sync_action_anchor()
                     return ActionReceipt(row[0], key, "EXECUTED", executed=True)
                 connection.execute("COMMIT")
                 return ActionReceipt(row[0], key, row[1], executed=False)
@@ -519,7 +519,7 @@ class ActionLedger:
             assert_tool_deadline_active()
             with tool_commit_section():
                 connection.execute("COMMIT")
-        self._sync_action_anchor()
+                self._sync_action_anchor()
         return ActionReceipt(action_id, key, "EXECUTED", executed=True)
 
     @ledger_locked

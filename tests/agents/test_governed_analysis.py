@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import pandas as pd
 import pytest
 from pydantic import ValidationError
 
-from controlflow.agents.experiments import GovernedAnalysis
+from controlflow.agents.experiments import GovernedAnalysis, _root_cause_compatible
 
 
 def test_insufficient_evidence_may_use_empty_citations() -> None:
@@ -39,3 +40,25 @@ def test_non_insufficient_analysis_requires_unique_citations() -> None:
                 "supporting_evidence_ids": [],
             }
         )
+
+
+def test_root_cause_compatibility_uses_benchmark_predicates() -> None:
+    row = pd.Series({"case_type": "normal", "control_ids": ["AC-2"]})
+    base = {"architecture_mode": "governed", "analysis_valid": True}
+    assert _root_cause_compatible(
+        row,
+        {**base, "root_cause_hypothesis": "AC-2 routine variance caused the exception"},
+    )
+    assert not _root_cause_compatible(
+        row,
+        {**base, "root_cause_hypothesis": "AC-2 caused an unrelated event"},
+    )
+    assert not _root_cause_compatible(
+        row,
+        {**base, "root_cause_hypothesis": "AC-2 routine variance does not apply"},
+    )
+    missing = pd.Series({"case_type": "missing_evidence", "control_ids": ["AC-2"]})
+    assert _root_cause_compatible(
+        missing,
+        {**base, "root_cause_hypothesis": "Required evidence is unavailable"},
+    )

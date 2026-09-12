@@ -6,7 +6,7 @@ import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from threading import Thread
+from threading import BoundedSemaphore, Thread
 from typing import Any, Generic, TypeVar, cast
 
 from pydantic import BaseModel
@@ -23,6 +23,10 @@ from controlflow.tools.deadline import (
 
 InputT = TypeVar("InputT", bound=BaseModel)
 OutputT = TypeVar("OutputT", bound=BaseModel)
+# A timed-out worker opens a process-wide circuit. No later tool work may
+# overlap it; capacity returns only when that worker actually exits.
+MAX_TOOL_WORKERS = 1
+_TOOL_WORKER_SLOTS = BoundedSemaphore(MAX_TOOL_WORKERS)
 
 
 @dataclass(frozen=True)
@@ -150,9 +154,26 @@ class ToolRegistry:
                     current_outcome.put(("error", exc))
                 finally:
                     reset_tool_deadline(token)
+                    _TOOL_WORKER_SLOTS.release()
 
+            if not _TOOL_WORKER_SLOTS.acquire(blocking=False):
+                self._audit(
+                    identity,
+                    {
+                        **base_event,
+                        "attempt": attempt + 1,
+                        "authorization": authorization.outcome.value,
+                        "status": "worker_capacity_exhausted",
+                        "duration_seconds": time.perf_counter() - started,
+                    },
+                )
+                raise RuntimeError("tool worker capacity exhausted; circuit breaker is open")
             worker = Thread(target=run_implementation, name=f"controlflow-tool-{name}", daemon=True)
-            worker.start()
+            try:
+                worker.start()
+            except Exception:
+                _TOOL_WORKER_SLOTS.release()
+                raise
             try:
                 try:
                     outcome_kind, outcome_value = outcome.get(timeout=spec.timeout_seconds)

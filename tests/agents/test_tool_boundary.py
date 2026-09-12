@@ -4,6 +4,7 @@ import json
 import time
 from pathlib import Path
 from threading import Event, Thread
+from threading import enumerate as enumerate_threads
 
 import numpy as np
 import pandas as pd
@@ -17,7 +18,7 @@ from controlflow.authorization.policy import LocalPolicyBackend
 from controlflow.hitl.approval import ApprovalAuthority
 from controlflow.schemas import IdentityContext, Severity
 from controlflow.tools.deadline import tool_commit_section
-from controlflow.tools.registry import ToolRegistry, ToolSpec
+from controlflow.tools.registry import MAX_TOOL_WORKERS, ToolRegistry, ToolSpec
 
 
 class Probe(BaseModel):
@@ -462,6 +463,85 @@ def test_never_returning_precommit_work_is_bounded_and_cancelled() -> None:
     release.set()
     assert elapsed < 0.2
     assert registry.audit_events[-1]["status"] == "timeout_precommit_cancelled"
+
+
+def test_hung_worker_capacity_opens_fail_closed_circuit_breaker() -> None:
+    release = Event()
+    identity = IdentityContext(
+        user_id="analyst",
+        role="Control Analyst",
+        business_unit="consumer",
+        region="US",
+        clearance=1,
+        purpose="investigation",
+        session_id="session",
+    )
+
+    def implementation(value: Probe) -> Probe:
+        release.wait()
+        return value
+
+    registries: list[ToolRegistry] = []
+    try:
+        for index in range(MAX_TOOL_WORKERS):
+            registry = ToolRegistry(LocalPolicyBackend())
+            registry.register(
+                ToolSpec(
+                    f"hung_{index}",
+                    Probe,
+                    Probe,
+                    0,
+                    True,
+                    frozenset({"Control Analyst"}),
+                    frozenset({"consumer"}),
+                    False,
+                    0.005,
+                    0,
+                    implementation,
+                )
+            )
+            with pytest.raises(RuntimeError, match="failed after"):
+                registry.invoke(
+                    f"hung_{index}",
+                    {"value": index},
+                    identity=identity,
+                    scope="consumer",
+                    data_classification=0,
+                    severity=Severity.LOW,
+                )
+            registries.append(registry)
+        overflow = ToolRegistry(LocalPolicyBackend())
+        overflow.register(
+            ToolSpec(
+                "overflow",
+                Probe,
+                Probe,
+                0,
+                True,
+                frozenset({"Control Analyst"}),
+                frozenset({"consumer"}),
+                False,
+                0.005,
+                0,
+                implementation,
+            )
+        )
+        with pytest.raises(RuntimeError, match="circuit breaker"):
+            overflow.invoke(
+                "overflow",
+                {"value": 99},
+                identity=identity,
+                scope="consumer",
+                data_classification=0,
+                severity=Severity.LOW,
+            )
+        assert overflow.audit_events[-1]["status"] == "worker_capacity_exhausted"
+    finally:
+        release.set()
+        deadline = time.monotonic() + 1.0
+        while any(thread.name.startswith("controlflow-tool-hung_") for thread in enumerate_threads()):
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
 
 
 def test_timed_out_write_cannot_commit_later(tmp_path: Path) -> None:

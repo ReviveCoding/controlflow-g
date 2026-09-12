@@ -185,8 +185,8 @@ class WorkflowTrace:
     attempted_tool_steps: list[dict[str, object]] = field(default_factory=list)
     llm_analysis_hash: str = "none"
     llm_analysis_valid: bool = True
-    llm_analysis_supported: bool = False
-    llm_analysis_support_checked: bool = False
+    llm_analysis_evidence_valid: bool = False
+    llm_analysis_evidence_checked: bool = False
 
 
 class GovernedWorkflow:
@@ -1266,36 +1266,17 @@ class GovernedWorkflow:
         analysis_evidence_ids = [str(value) for value in analysis.get("supporting_evidence_ids", [])]
         cited_items = {item.evidence_id: item for item in evidence}
         citations_authorized = set(analysis_evidence_ids).issubset(cited_items)
-        final_action_for_disposition = (
-            "REQUEST_EVIDENCE"
-            if disposition == "INSUFFICIENT_EVIDENCE"
-            else "ESCALATE"
-            if disposition in {"REVIEW_REQUIRED", "DENY"}
-            else "INVESTIGATE"
-        )
         if disposition == "INSUFFICIENT_EVIDENCE" and not analysis_evidence_ids:
-            analysis_supported = not evidence and bounded_recommendation == "REQUEST_EVIDENCE"
+            analysis_evidence_valid = not evidence and bounded_recommendation == "REQUEST_EVIDENCE"
         else:
             claim_verification = verify_claims(
                 state,
                 {"applicability": (root_cause, tuple(analysis_evidence_ids))},
             )
-            cited_identifiers = {
-                value.casefold().split(":", maxsplit=1)[0]
-                for value in analysis_evidence_ids
-                if CONTROL.fullmatch(value.split(":", maxsplit=1)[0])
-                or REGULATION.fullmatch(value.split(":", maxsplit=1)[0])
-            }
-            analysis_supported = (
-                citations_authorized
-                and claim_verification.all_verified
-                and bool(cited_identifiers)
-                and any(identifier in root_cause.casefold() for identifier in cited_identifiers)
-                and bounded_recommendation == final_action_for_disposition
-            )
+            analysis_evidence_valid = citations_authorized and claim_verification.all_verified
         if analysis.get("architecture_mode") == "governed":
             if config.verifier:
-                analysis_valid = analysis_valid and analysis_supported
+                analysis_valid = analysis_valid and analysis_evidence_valid
             if not analysis_valid:
                 root_cause = "LLM analysis omitted because schema or evidence validation failed"
                 bounded_recommendation = "REQUEST_EVIDENCE"
@@ -1504,6 +1485,6 @@ class GovernedWorkflow:
             attempted_tool_steps=attempted_tool_steps,
             llm_analysis_hash=analysis_hash,
             llm_analysis_valid=analysis_valid,
-            llm_analysis_supported=analysis_supported,
-            llm_analysis_support_checked=(config.verifier and analysis.get("architecture_mode") == "governed"),
+            llm_analysis_evidence_valid=analysis_evidence_valid,
+            llm_analysis_evidence_checked=(config.verifier and analysis.get("architecture_mode") == "governed"),
         )
