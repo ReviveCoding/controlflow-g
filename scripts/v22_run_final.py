@@ -57,9 +57,11 @@ def main() -> None:
         "evidence": directory / "evidence_corpus.parquet",
         "authorization": directory / "authorization_state.parquet",
     }
+    # The candidate may authenticate only runtime-visible inputs before its
+    # output is closed.  Sealed evaluator truth is verified below, after the
+    # candidate run, so even hashing cannot expose truth bytes to execution.
     for key, binding in (
         ("runtime", "final_runtime_sha256"),
-        ("truth", "final_truth_sha256"),
         ("evidence", "final_evidence_sha256"),
         ("authorization", "final_authorization_sha256"),
     ):
@@ -139,6 +141,8 @@ def main() -> None:
         checkpoint_fields=checkpoint_fields,
         concurrency=2,
     )
+    if sha256_file(paths["truth"]) != freeze["bindings"]["final_truth_sha256"]:
+        raise RuntimeError("FINAL_FREEZE_MISMATCH: truth")
     metrics_path = ROOT / "results/v22/final_metrics.json"
     metrics = evaluate(
         output,

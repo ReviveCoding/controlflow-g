@@ -60,6 +60,14 @@ def test_qualification_defers_truth_bytes_until_candidate_output_closes() -> Non
     assert candidate_close < truth_hash < evaluator_open
 
 
+def test_final_defers_truth_bytes_until_candidate_output_closes() -> None:
+    source = (Path(__file__).resolve().parents[2] / "scripts/v22_run_final.py").read_text(encoding="utf-8")
+    candidate_close = source.index("runner.run_dataset(")
+    truth_hash = source.index('sha256_file(paths["truth"]) != freeze["bindings"]["final_truth_sha256"]')
+    evaluator_open = source.index("metrics = evaluate(")
+    assert candidate_close < truth_hash < evaluator_open
+
+
 def test_evaluator_cardinality_fails_closed_on_missing_case_or_event() -> None:
     from controlflow.v22.evaluation import assert_exact_evaluation_cardinality
 
