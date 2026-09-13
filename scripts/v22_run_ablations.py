@@ -116,6 +116,39 @@ def main() -> None:
         "NO_SEMANTIC_VERIFIER": json.loads(semantic_path.read_text()) if semantic_path.exists() else None,
         "FULL_STRUCTURED_SERVING": json.loads(structured_path.read_text()) if structured_path.exists() else None,
     }
+    paired_llm: dict[str, Any] = {}
+    full_serving = llm_ablations["FULL_STRUCTURED_SERVING"]
+    if full_serving is not None:
+        full_frame = pd.read_parquet(ROOT / full_serving["response_artifact"]["path"])[
+            ["case_id", "structured_output_valid", "total_latency_seconds"]
+        ].rename(
+            columns={
+                "structured_output_valid": "full_valid",
+                "total_latency_seconds": "full_latency",
+            }
+        )
+        for name in ("NO_CONSTRAINED_OUTPUT", "NO_SEMANTIC_VERIFIER"):
+            intervention_report = llm_ablations[name]
+            if intervention_report is None:
+                continue
+            intervention = pd.read_parquet(ROOT / intervention_report["response_artifact"]["path"])[
+                ["case_id", "structured_output_valid", "total_latency_seconds"]
+            ].rename(
+                columns={
+                    "structured_output_valid": "intervention_valid",
+                    "total_latency_seconds": "intervention_latency",
+                }
+            )
+            joined = full_frame.merge(intervention, on="case_id", validate="one_to_one")
+            paired_llm[name] = {
+                "cases": len(joined),
+                "full_valid_minus_intervention_valid": float(
+                    joined.full_valid.astype(int).mean() - joined.intervention_valid.astype(int).mean()
+                ),
+                "mean_total_latency_difference_seconds": float(
+                    (joined.full_latency - joined.intervention_latency).mean()
+                ),
+            }
     report = {
         "schema_version": 1,
         "created_at": utc_now(),
@@ -126,6 +159,7 @@ def main() -> None:
         "summaries": summaries,
         "paired_core_stc": paired,
         "llm_ablations": llm_ablations,
+        "paired_llm_differences": paired_llm,
         "qualification_evidence": False,
     }
     atomic_write_json(ROOT / "results/v22/development_ablations.json", report)

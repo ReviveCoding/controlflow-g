@@ -244,6 +244,7 @@ def main() -> None:
         },
         "evaluator_protocol_hash": evaluator_protocol_hash(ROOT),
         "gate_config_hash": sha256_file(ROOT / "configs/v22/qualification_gates.yaml"),
+        "qualification_gate_freeze_hash": sha256_file(ROOT / "configs/v22/qualification_gate_freeze.json"),
         "seed": int(runtime_config["development"]["seeds"]["validation"]),
         "concurrency": 1,
     }

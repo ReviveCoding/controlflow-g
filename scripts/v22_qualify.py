@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pandas as pd
@@ -38,22 +39,70 @@ def main() -> None:
     gates_config = yaml.safe_load((ROOT / "configs/v22/qualification_gates.yaml").read_text(encoding="utf-8"))
     if not gates_config.get("frozen_before_qualification"):
         raise RuntimeError("QUALIFICATION_PROHIBITED: gates are not frozen")
-    gate_freeze_path = ROOT / "state/v22_qualification_gate_freeze.json"
+    gate_freeze_path = ROOT / "configs/v22/qualification_gate_freeze.json"
     if not gate_freeze_path.is_file():
         raise RuntimeError("QUALIFICATION_PROHIBITED: committed gate freeze evidence missing")
     gate_freeze = json.loads(gate_freeze_path.read_text(encoding="utf-8"))
-    if gate_freeze.get("status") != "FROZEN_BEFORE_QUALIFICATION" or gate_freeze.get(
-        "gate_config_sha256"
-    ) != sha256_file(ROOT / "configs/v22/qualification_gates.yaml"):
+    current_commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=ROOT, check=True, capture_output=True, text=True
+    ).stdout.strip()
+    if (
+        gate_freeze.get("status") != "FROZEN_BEFORE_QUALIFICATION"
+        or gate_freeze.get("gate_config_sha256") != sha256_file(ROOT / "configs/v22/qualification_gates.yaml")
+        or gate_freeze.get("qualification_results_present_at_freeze") is not False
+        or subprocess.run(
+            ["git", "ls-files", "--error-unmatch", "configs/v22/qualification_gate_freeze.json"],
+            cwd=ROOT,
+            capture_output=True,
+        ).returncode
+        != 0
+        or subprocess.run(
+            ["git", "merge-base", "--is-ancestor", str(gate_freeze.get("source_commit")), current_commit],
+            cwd=ROOT,
+            capture_output=True,
+        ).returncode
+        != 0
+        or subprocess.run(
+            ["git", "show", "HEAD:configs/v22/qualification_gate_freeze.json"],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+        ).stdout
+        != gate_freeze_path.read_bytes()
+    ):
         raise RuntimeError("QUALIFICATION_PROHIBITED: gate freeze mismatch")
     serving = json.loads((ROOT / "state/v22_vllm_structured_c2.json").read_text(encoding="utf-8"))
     if not serving.get("actual_live_vllm") or serving.get("concurrency") != 2:
         raise RuntimeError("QUALIFICATION_PROHIBITED: live concurrency-2 serving evidence missing")
     directory = ROOT / "data/v22/qualification/V22QUAL"
-    manifest = generate_split(directory, role="QUALIFICATION", count=600, seed=22901, prefix="V22QUAL")
+    dataset_manifest_path = directory / "manifest.json"
+    if prior_manifest.get("one_shot_opened"):
+        if not dataset_manifest_path.is_file():
+            raise RuntimeError("QUALIFICATION_INVALID: interrupted dataset generation")
+        manifest = json.loads(dataset_manifest_path.read_text(encoding="utf-8"))
+    else:
+        atomic_write_json(
+            qualification_manifest_path,
+            {
+                "schema_version": 1,
+                "created_at": utc_now(),
+                "status": "QUALIFICATION_EXECUTION_STARTED",
+                "one_shot_opened": True,
+                "qualification_executed": False,
+            },
+        )
+        manifest = generate_split(directory, role="QUALIFICATION", count=600, seed=22901, prefix="V22QUAL")
     runtime_path = directory / "runtime_cases.parquet"
     truth_path = directory / "evaluator_truth.parquet"
     evidence_path = directory / "evidence_corpus.parquet"
+    for path, field in (
+        (runtime_path, "runtime_sha256"),
+        (truth_path, "truth_sha256"),
+        (evidence_path, "evidence_sha256"),
+        (directory / "authorization_state.parquet", "authorization_sha256"),
+    ):
+        if sha256_file(path) != manifest[field]:
+            raise RuntimeError("QUALIFICATION_INVALID: generated dataset hash mismatch")
     prior_paths = []
     for path in (ROOT / "data").rglob("*.parquet"):
         if path.resolve() == runtime_path.resolve():
@@ -138,6 +187,7 @@ def main() -> None:
         },
         "evaluator_protocol_hash": evaluator_protocol_hash(ROOT),
         "gate_config_hash": sha256_file(ROOT / "configs/v22/qualification_gates.yaml"),
+        "qualification_gate_freeze_hash": sha256_file(gate_freeze_path),
         "seed": 22901,
         "concurrency": 2,
     }
@@ -159,6 +209,7 @@ def main() -> None:
         metrics_path,
         critical_threshold=bundle.threshold,
         concurrency=2,
+        role="QUALIFICATION",
     )
     gate_result = apply_gates(
         metrics=metrics,
@@ -176,6 +227,7 @@ def main() -> None:
             "status": status,
             "qualification_executed": True,
             "one_shot": True,
+            "one_shot_opened": True,
             "dataset": manifest,
             "contamination": contamination,
             "candidate_output_sha256": sha256_file(output_path),
@@ -187,4 +239,12 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    lock = ROOT / "state/v22_qualification_execution.lock"
+    try:
+        lock.mkdir()
+    except FileExistsError as exc:
+        raise RuntimeError("QUALIFICATION_EXECUTION_ALREADY_ACTIVE") from exc
+    try:
+        main()
+    finally:
+        lock.rmdir()

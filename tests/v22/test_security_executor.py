@@ -5,18 +5,24 @@ import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
 from controlflow.v22.approval import ApprovalIssuer, ApprovalVerifier
+from controlflow.v22.candidate import CandidateExecutionWorkflow, CandidateRunner
+from controlflow.v22.checkpoint import REQUIRED_FIELDS
 from controlflow.v22.executor import InjectedCrash, TransactionalExecutor, ledger_security_metrics, verify_ledger
 from controlflow.v22.policy import ActionRegistry, AuthorizationState, PolicyDecisionPoint
+from controlflow.v22.retrieval import EvidenceRetriever
 from controlflow.v22.schemas import (
     AuthenticatedContext,
+    ModelDecision,
     PolicyDecision,
     PolicyInput,
     ProposedAction,
     Severity,
 )
+from controlflow.v22.temporal import CandidateTemporalRetriever, load_policy_corpus
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -339,3 +345,85 @@ def test_foreign_keys_and_deleted_chain_detection(tmp_path: Path) -> None:
     audit = verify_ledger(executor.path)
     assert not audit["valid"]
     assert "head_without_events" in audit["failures"]
+
+
+def test_actual_candidate_runner_recovers_after_durable_commit_before_partial_output(tmp_path: Path) -> None:
+    executor, _, _, _, _ = setup_executor(tmp_path, fault="immediately_after_commit")
+
+    class ObservableBundle:
+        bundle_hash = "a" * 64
+
+        @staticmethod
+        def infer(_frame, **_options):
+            return ModelDecision(
+                severity=Severity.LOW,
+                critical_probability=0.01,
+                root_cause="PROCESS",
+                novelty=0.1,
+                uncertainty=0.1,
+            )
+
+    candidate = CandidateRunner(
+        bundle=ObservableBundle(),  # type: ignore[arg-type]
+        evidence=EvidenceRetriever([]),
+        temporal=CandidateTemporalRetriever(load_policy_corpus(ROOT / "configs/v22/temporal_policies.yaml")),
+        executor=executor,
+        workflow_version="v22-workflow-1",
+    )
+    workflow = CandidateExecutionWorkflow(candidate, reviewer=None)
+    frame = pd.DataFrame(
+        [
+            {
+                "case_id": "CASE-RUNNER",
+                "entity_id": "ENTITY-RUNNER",
+                "event_time": "2026-05-01T00:00:00Z",
+                "system_time": "2026-09-01T00:00:00Z",
+                "authenticated_identity": "alice",
+                "role": "senior_investigator",
+                "business_unit": "consumer",
+                "region": "US",
+                "clearance": 3,
+                "purpose": "control_exception_investigation",
+                "requested_scope": "consumer",
+                "data_classification": 2,
+                "control_family": "AC",
+                "control_test_count": 20,
+                "control_test_failures": 1,
+                "historical_incidents": 0,
+                "transaction_count": 100,
+                "anomaly_count": 1,
+                "privileged_event_count": 0,
+                "repeat_exception_ratio": 0.1,
+                "customer_impact_signal": 0.1,
+                "policy_risk_signal": 0.1,
+                "affected_customers": 0,
+                "amount_variance": 0.0,
+                "scope_difference": 0.0,
+                "narrative": "observable low risk case",
+                "evidence_query": "incident-runner AC consumer process 2026",
+            }
+        ]
+    )
+    checkpoint_fields = {name: "bound" for name in REQUIRED_FIELDS}
+    partial = tmp_path / "actual.partial.jsonl"
+    checkpoint = tmp_path / "actual.checkpoint.json"
+    output = tmp_path / "actual.parquet"
+    with pytest.raises(InjectedCrash, match="immediately_after_commit"):
+        workflow.run_dataset(
+            frame,
+            output_path=output,
+            partial_path=partial,
+            checkpoint_path=checkpoint,
+            checkpoint_fields=checkpoint_fields,
+        )
+    assert len([row for row in executor.rows("action_ledger") if row["committed"]]) == 1
+    executor.fault = None
+    results = workflow.run_dataset(
+        frame,
+        output_path=output,
+        partial_path=partial,
+        checkpoint_path=checkpoint,
+        checkpoint_fields=checkpoint_fields,
+    )
+    assert len(results) == 1
+    assert len(executor.rows("action_ledger")) == 1

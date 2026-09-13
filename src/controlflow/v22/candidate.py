@@ -270,11 +270,24 @@ class CandidateExecutionWorkflow:
         if checkpoint_path.exists():
             completed = validate_checkpoint(checkpoint_path, checkpoint_fields)
             if not partial_path.exists():
-                raise RuntimeError("CHECKPOINT_INCOMPATIBLE: partial output missing")
-            records = [json.loads(line) for line in partial_path.read_text(encoding="utf-8").splitlines() if line]
+                if completed:
+                    raise RuntimeError("CHECKPOINT_INCOMPATIBLE: partial output missing")
+                records = []
+            else:
+                records = [json.loads(line) for line in partial_path.read_text(encoding="utf-8").splitlines() if line]
             partial_ids = [str(item["case_id"]) for item in records]
             if partial_ids[: len(completed)] != completed or len(partial_ids) != len(set(partial_ids)):
                 raise RuntimeError("CHECKPOINT_INCOMPATIBLE: partial output does not match checkpoint")
+            if len(partial_ids) > len(completed):
+                ledger_rows = {str(row["event_id"]): row for row in self.candidate.executor.rows("action_ledger")}
+                for record in records[len(completed) :]:
+                    event = ledger_rows.get(str(record["execution_event_id"]))
+                    if (
+                        event is None
+                        or str(event["case_id"]) != str(record["case_id"])
+                        or str(event["candidate_bundle_hash"]) != self.candidate.bundle.bundle_hash
+                    ):
+                        raise RuntimeError("CHECKPOINT_INCOMPATIBLE: partial suffix lacks ledger binding")
             # A crash can occur after the durable partial append but before its
             # checkpoint update. Ledger idempotency makes adopting this suffix safe.
             completed = partial_ids

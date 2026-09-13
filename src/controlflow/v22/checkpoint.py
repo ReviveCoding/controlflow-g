@@ -28,6 +28,7 @@ REQUIRED_FIELDS = frozenset(
         "pdp_action_registry_hashes",
         "evaluator_protocol_hash",
         "gate_config_hash",
+        "qualification_gate_freeze_hash",
         "seed",
         "concurrency",
     }

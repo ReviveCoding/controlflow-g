@@ -29,6 +29,7 @@ def load_authoritative_state(path: Path) -> AuthorizationState:
                 "region": str(row.region),
                 "clearance": int(row.clearance),
                 "authorization_version": str(row.authorization_version),
+                "case_risk_version": str(row.case_risk_version),
             }
             for row in frame.itertuples()
         }

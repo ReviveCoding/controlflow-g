@@ -106,6 +106,7 @@ def evaluate(
     *,
     critical_threshold: float,
     concurrency: int = 1,
+    role: str = "DEVELOPMENT_VALIDATION",
 ) -> dict[str, Any]:
     results = pd.read_parquet(results_path)
     truth = pd.read_parquet(truth_path)
@@ -179,7 +180,7 @@ def evaluate(
     metrics = {
         "schema_version": 1,
         "created_at": utc_now(),
-        "role": "DEVELOPMENT_VALIDATION",
+        "role": role,
         "binary_critical_recall": wilson(binary_critical_success, int(critical.sum())),
         "typed_critical_recall": wilson(typed_critical_success, int(critical.sum())),
         "core_stc": wilson(int(joined.core_stc_pass.sum()), len(joined)),

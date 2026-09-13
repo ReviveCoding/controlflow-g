@@ -24,10 +24,13 @@ ROOT = Path(__file__).resolve().parents[1]
 def main() -> None:
     final_manifest_path = ROOT / "state/v22_final_manifest.json"
     final_manifest = json.loads(final_manifest_path.read_text(encoding="utf-8"))
-    if final_manifest.get("one_shot_executed"):
+    if final_manifest.get("one_shot_executed") or final_manifest.get("status") == "INVALID":
         raise RuntimeError("V22 final is one-shot and has already been executed")
-    if final_manifest.get("status") != "GENERATED_SEALED_NOT_RUN":
+    if final_manifest.get("status") not in {"GENERATED_SEALED_NOT_RUN", "FINAL_EXECUTION_STARTED"}:
         raise RuntimeError("FINAL_EXECUTION_PROHIBITED: final data is not sealed")
+    if final_manifest.get("status") == "GENERATED_SEALED_NOT_RUN":
+        final_manifest.update({"status": "FINAL_EXECUTION_STARTED", "one_shot_opened": True, "opened_at": utc_now()})
+        atomic_write_json(final_manifest_path, final_manifest)
     freeze_path = ROOT / "state/v22_freeze_manifest.json"
     freeze = json.loads(freeze_path.read_text(encoding="utf-8"))
     claimed_hash = freeze.get("freeze_hash")
@@ -123,6 +126,7 @@ def main() -> None:
         },
         "evaluator_protocol_hash": evaluator_protocol_hash(ROOT),
         "gate_config_hash": sha256_file(ROOT / "configs/v22/qualification_gates.yaml"),
+        "qualification_gate_freeze_hash": sha256_file(ROOT / "configs/v22/qualification_gate_freeze.json"),
         "seed": 23901,
         "concurrency": 2,
     }
@@ -143,6 +147,7 @@ def main() -> None:
         metrics_path,
         critical_threshold=bundle.threshold,
         concurrency=2,
+        role="FINAL",
     )
     integrity = json.loads((ROOT / "state/v22_integrity.json").read_text(encoding="utf-8"))
     reviews = json.loads((ROOT / "state/v22_postqualification_review.json").read_text(encoding="utf-8"))
@@ -172,4 +177,12 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    lock = ROOT / "state/v22_final_execution.lock"
+    try:
+        lock.mkdir()
+    except FileExistsError as exc:
+        raise RuntimeError("FINAL_EXECUTION_ALREADY_ACTIVE") from exc
+    try:
+        main()
+    finally:
+        lock.rmdir()

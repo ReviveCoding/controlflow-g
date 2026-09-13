@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import json
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +44,33 @@ def main() -> None:
     endpoint_root = f"http://{serving['host']}:{serving['port']}"
     health = httpx.get(f"{endpoint_root}/v1/models", timeout=10)
     health.raise_for_status()
+    served_models = {str(item["id"]) for item in health.json()["data"]}
+    live_model_identity_verified = "controlflow-g-v22-qwen3-4b" in served_models
+    process_probe = subprocess.run(
+        [
+            "wsl.exe",
+            "-d",
+            "Ubuntu-22.04",
+            "--",
+            "bash",
+            "-lc",
+            "pgrep -af 'vllm serve Qwen/Qwen3-4B-Instruct-2507'",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    required_arguments = (
+        str(serving["revision"]),
+        "--dtype bfloat16",
+        f"--gpu-memory-utilization {serving['gpu_memory_utilization']}",
+        f"--max-model-len {serving['max_model_len']}",
+        "--max-num-seqs 2",
+        "--structured-outputs-config.backend xgrammar",
+    )
+    live_command_line_verified = all(item in process_probe for item in required_arguments)
+    if not live_model_identity_verified or not live_command_line_verified:
+        raise RuntimeError("LIVE_VLLM_IDENTITY_OR_ARGUMENT_MISMATCH")
     client = StructuredVllmClient(
         endpoint=f"{endpoint_root}/v1/chat/completions",
         model="controlflow-g-v22-qwen3-4b",
@@ -89,6 +117,10 @@ def main() -> None:
         "created_at": utc_now(),
         "role": "DEVELOPMENT_VALIDATION",
         "actual_live_vllm": True,
+        "live_model_identity_verified": live_model_identity_verified,
+        "live_command_line_verified": live_command_line_verified,
+        "live_served_models": sorted(served_models),
+        "live_process_command": process_probe,
         "model": serving["model"],
         "model_revision": serving["revision"],
         "vllm_version": json.loads(
