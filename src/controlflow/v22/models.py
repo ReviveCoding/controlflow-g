@@ -13,7 +13,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import brier_score_loss, classification_report, recall_score
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.preprocessing import FunctionTransformer, OneHotEncoder, StandardScaler
 
 from controlflow.core.state import atomic_write_json, sha256_file, utc_now
 
@@ -32,16 +32,37 @@ NUMERIC = [
     "scope_difference",
     "clearance",
     "data_classification",
+    "control_test_failure_rate",
+    "anomaly_rate",
+    "log_amount_variance",
 ]
 CATEGORICAL = ["control_family", "business_unit", "region", "role", "requested_scope"]
 
 
-def _features() -> ColumnTransformer:
-    return ColumnTransformer(
+def _engineer_observable_rates(frame: pd.DataFrame) -> pd.DataFrame:
+    engineered = frame.copy()
+    engineered["control_test_failure_rate"] = engineered.control_test_failures / engineered.control_test_count.clip(
+        lower=1
+    )
+    engineered["anomaly_rate"] = engineered.anomaly_count / engineered.transaction_count.clip(lower=1)
+    engineered["log_amount_variance"] = np.log1p(engineered.amount_variance.clip(lower=0))
+    return engineered
+
+
+def _features() -> Pipeline:
+    return Pipeline(
         [
-            ("numeric", StandardScaler(), NUMERIC),
-            ("categorical", OneHotEncoder(handle_unknown="ignore"), CATEGORICAL),
-            ("text", TfidfVectorizer(ngram_range=(1, 2), min_df=2, max_features=3500), "narrative"),
+            ("engineered_observable_rates", FunctionTransformer(_engineer_observable_rates, validate=False)),
+            (
+                "columns",
+                ColumnTransformer(
+                    [
+                        ("numeric", StandardScaler(), NUMERIC),
+                        ("categorical", OneHotEncoder(handle_unknown="ignore"), CATEGORICAL),
+                        ("text", TfidfVectorizer(ngram_range=(1, 2), min_df=2, max_features=3500), "narrative"),
+                    ]
+                ),
+            ),
         ]
     )
 
@@ -63,7 +84,8 @@ def _critical_threshold(y: np.ndarray, probabilities: np.ndarray) -> tuple[float
         fpr = float(np.mean(prediction[negatives])) if negatives.any() else 0.0
         if recall >= 0.95:
             residual_critical_risk = 1.0 - recall
-            operational_burden = fpr + 4.0 * residual_critical_risk
+            safety_margin_deficit = max(0.0, 0.98 - recall)
+            operational_burden = fpr + 1.5 * residual_critical_risk + 10.0 * safety_margin_deficit
             eligible.append((operational_burden, fpr, -float(threshold), recall))
     if not eligible:
         raise RuntimeError("no calibration-only threshold meets critical recall >= 0.95")
@@ -353,7 +375,8 @@ def train_models(
         "selected_calibrator": calibrator_name,
         "critical_threshold": threshold,
         "threshold_rule": (
-            "CALIBRATION recall >= 0.95 then minimize FPR + 4*residual-critical-risk; break ties by highest threshold"
+            "CALIBRATION recall >= 0.95 then minimize FPR + 1.5*residual-critical-risk + "
+            "10*max(0,0.98-recall); break ties by highest threshold"
         ),
         "threshold_metrics": threshold_metrics,
         "gpu_evidence": gpu_evidence,

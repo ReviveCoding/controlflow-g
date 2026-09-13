@@ -66,8 +66,8 @@ def main() -> None:
         "03_calibration_threshold.md",
         "V2.2 Calibration and Critical Threshold",
         "Calibration and threshold selection use CALIBRATION only. The predeclared rule retains thresholds with "
-        "critical recall at least 0.95, minimizes FPR plus four times residual critical risk, and breaks ties "
-        "toward the higher threshold.\n\n"
+        "critical recall at least 0.95, then minimizes FPR plus 1.5 times residual critical risk and a penalty "
+        "for falling below a 0.98 development safety margin; ties favor the higher threshold.\n\n"
         f"Selected calibrator: {None if training is None else training.get('selected_calibrator')}; threshold: "
         f"{bundle.get('critical_threshold')}; provenance: {bundle.get('threshold_provenance')}.",
     )
