@@ -1,0 +1,9 @@
+Linux JwB 6.18.33.2-microsoft-standard-WSL2 #1 SMP PREEMPT_DYNAMIC Thu Jun 18 21:54:43 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux
+Python 3.10.12
+{"torch": "2.13.0+cu130", "cuda": "13.0", "cuda_available": true, "vllm": "0.29.0", "xgboost": "3.2.0"}
+0, NVIDIA GeForce RTX 4090 Laptop GPU, 16376, 16048, 0, 616.92
+Filesystem         1B-blocks         Used   Available Use% Mounted on
+C:\            1021821579264 928422502400 93399076864  91% /mnt/c
+               total        used        free      shared  buff/cache   available
+Mem:     16627998720  2254397440  2673381376  1656741888 11700219904 12462698496
+Swap:     4294967296   596570112  3698397184

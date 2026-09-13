@@ -52,8 +52,9 @@ def main() -> None:
     _write(
         "01_data_independence.md",
         "V2.2 Data Independence",
-        f"Only {', '.join(dataset.get('roles_present', [])) or 'no'} development roles exist. Qualification present: "
-        f"{dataset.get('qualification_present', False)}. Runtime files exclude the forbidden truth fields and the "
+        f"The development manifest contains {', '.join(dataset.get('roles_present', [])) or 'no'} roles and was "
+        f"sealed before qualification. Qualification status: {qualification.get('status', 'NOT_GENERATED')}. "
+        "Runtime files exclude the forbidden truth fields and the "
         "evaluator truth is physically separate. Split seeds, template families, paths, and SHA256 values are in "
         "`state/v22_dataset_manifest.json`; automated exact and character-ngram similarity results are bound there.",
     )
@@ -120,7 +121,8 @@ def main() -> None:
         + (
             "Live serving has not yet produced admissible evidence."
             if serving is None
-            else f"Live vLLM evidence records {serving['requests']} requests at concurrency={serving['concurrency']}, "
+            else f"Development live vLLM evidence records {serving['requests']} requests at "
+            f"concurrency={serving['concurrency']}, "
             f"structured failures={serving['total_structured_failures']}, and total P95="
             f"{serving['total_p95_seconds']:.3f}s."
         ),
@@ -180,7 +182,8 @@ def main() -> None:
         "This is a local simulated study, not a bank deployment and not authorized for real financial action. A "
         "local SHA256 chain is tamper-evident only while its head anchor is trusted. Synthetic latent labels do not "
         "establish production validity. Observed zero security failures cannot prove zero true risk. Rationale "
-        "diagnostics remain secondary to typed Core STC.",
+        "diagnostics remain secondary to typed Core STC. Qualification failed sustained serving latency, and six "
+        "of 600 structured responses failed even though the point estimate met the boundary exactly.",
     )
     _write(
         "17_future_work.md",
