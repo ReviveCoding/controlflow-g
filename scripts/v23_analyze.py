@@ -292,7 +292,9 @@ def main() -> None:
         ),
         "thermal_or_power_driven": False,
         "thermal_note": (
-            "Temperature correlation is modest and power/SM-clock correlations do not support a thermal cause."
+            "Temperature association is weak. Latency is inversely associated with SM clock, memory clock, and "
+            "power in this cohort; that observed association is preserved but does not by itself establish thermal "
+            "or power throttling."
         ),
     }
     tail_artifact = {

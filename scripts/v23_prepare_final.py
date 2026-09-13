@@ -27,6 +27,23 @@ def main() -> None:
         raise RuntimeError(
             f"FINAL_PROHIBITED: qualification artifact bindings failed: {qualification_binding_failures}"
         )
+    qualification_dataset = qualification.get("dataset", {})
+    qualification_directory = ROOT / "data/v23/qualification/V23QUAL"
+    qualification_dataset_paths = {
+        "runtime_sha256": qualification_directory / "runtime_cases.parquet",
+        "truth_sha256": qualification_directory / "evaluator_truth.parquet",
+        "evidence_sha256": qualification_directory / "evidence_corpus.parquet",
+        "authorization_sha256": qualification_directory / "authorization_state.parquet",
+    }
+    for manifest_field, dataset_path in qualification_dataset_paths.items():
+        if qualification_dataset.get(manifest_field) != sha256_file(dataset_path):
+            raise RuntimeError(f"FINAL_PROHIBITED: qualification dataset manifest mismatch: {manifest_field}")
+    qualification_contamination_path = ROOT / "results/v23/qualification_contamination.json"
+    qualification_contamination = json.loads(qualification_contamination_path.read_text(encoding="utf-8"))
+    if qualification_contamination != qualification.get("contamination"):
+        raise RuntimeError("FINAL_PROHIBITED: qualification contamination evidence mismatch")
+    if qualification_contamination.get("leakage_findings"):
+        raise RuntimeError("FINAL_PROHIBITED: qualification contamination findings are nonzero")
     reviews_path = ROOT / "state/v23_review_findings.json"
     reviews = json.loads(reviews_path.read_text(encoding="utf-8"))
     if reviews.get("status") != "POST_QUALIFICATION_CLEAR" or reviews.get("counts") != {
@@ -77,6 +94,7 @@ def main() -> None:
         _binding(directory / "manifest.json"),
         _binding(contamination_path),
         _binding(qualification_path),
+        _binding(qualification_contamination_path),
         _binding(reviews_path),
         _binding(ROOT / "configs/v23/qualification_gates.yaml"),
         _binding(ROOT / "configs/v23/serving.yaml"),

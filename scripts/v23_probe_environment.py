@@ -76,13 +76,29 @@ def main() -> None:
             'speculative|per.request.metrics"',
         ],
     )
+    dependency_inventory = run(
+        "wsl_serving_pip_freeze",
+        [
+            "wsl.exe",
+            "-d",
+            "Ubuntu-22.04",
+            "--",
+            "bash",
+            "-lc",
+            '"$HOME/.venvs/controlflow-g-v2/bin/python" -m pip freeze --all',
+        ],
+    )
     consumer_text = (ROOT / consumers["evidence_path"]).read_text(encoding="utf-8").strip()
     budget = yaml.safe_load((ROOT / "configs/resource_budget.yaml").read_text(encoding="utf-8"))
     reserve = int(budget["minimum_free_space_gib"]) * 1024**3
     manifest = {
         "schema_version": 1,
         "created_at": utc_now(),
-        "probe_status": "COMPLETE" if all(x["exit_code"] == 0 for x in (consumers, wsl, help_probe)) else "PARTIAL",
+        "probe_status": (
+            "COMPLETE"
+            if all(x["exit_code"] == 0 for x in (consumers, wsl, help_probe, dependency_inventory))
+            else "PARTIAL"
+        ),
         "gpu": sample_nvidia(),
         "background_gpu_consumers": [line for line in consumer_text.splitlines() if line.strip()],
         "gpu_workload_admission": "DEFER_GPU" if consumer_text else "AVAILABLE_AT_PROBE",
@@ -93,7 +109,8 @@ def main() -> None:
         "minimum_free_space_bytes": reserve,
         "free_space_reserve_satisfied": disk.free >= reserve,
         "resource_budget_sha256": sha256_file(ROOT / "configs/resource_budget.yaml"),
-        "commands": [consumers, wsl, help_probe],
+        "serving_dependency_inventory": dependency_inventory,
+        "commands": [consumers, wsl, help_probe, dependency_inventory],
     }
     atomic_write_json(ROOT / "state/v23_environment_manifest.json", manifest)
     if not manifest["free_space_reserve_satisfied"]:

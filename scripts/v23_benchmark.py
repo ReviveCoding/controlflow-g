@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import subprocess
 import warnings
 from pathlib import Path
@@ -140,6 +141,39 @@ def _verify_server(config: dict[str, Any], args: argparse.Namespace) -> dict[str
             expected.append(f"--max-num-batched-tokens {args.batched_tokens}")
         elif "--max-num-batched-tokens" in command:
             raise RuntimeError("LIVE_V23_SERVER_ARGUMENT_MISMATCH: expected installed default batched-token budget")
+        exact_argv = [
+            "/home/bjw-0/.venvs/controlflow-g-v2/bin/python",
+            "/home/bjw-0/.venvs/controlflow-g-v2/bin/vllm",
+            "serve",
+            config["model"],
+            "--revision",
+            config["revision"],
+            "--served-model-name",
+            config["served_model_name"],
+            "--dtype",
+            "bfloat16",
+            "--gpu-memory-utilization",
+            "0.72",
+            "--max-model-len",
+            "4096",
+            "--max-num-seqs",
+            "2",
+            "--structured-outputs-config.backend",
+            "xgrammar",
+            "--enable-chunked-prefill",
+            prefix_flag,
+            "--enable-per-request-metrics",
+            "--enable-request-id-headers",
+            "--performance-mode",
+            args.performance_mode,
+            "--optimization-level",
+            str(args.optimization_level),
+        ]
+        if args.batched_tokens:
+            exact_argv.extend(("--max-num-batched-tokens", str(args.batched_tokens)))
+        exact_argv.extend(("--generation-config", "vllm", "--host", config["host"], "--port", str(config["port"])))
+        if shlex.split(command.split(maxsplit=1)[1]) != exact_argv:
+            raise RuntimeError("LIVE_V23_SERVER_EXACT_ARGV_MISMATCH")
     verified = config["served_model_name"] in served and all(item in command for item in expected)
     if not verified:
         raise RuntimeError("LIVE_V23_SERVER_ARGUMENT_MISMATCH")

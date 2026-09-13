@@ -101,6 +101,8 @@ def main() -> None:
         _binding(prequalification_review_path),
         _binding(ROOT / "state/v23_historical_boundary.json"),
         _binding(ROOT / "state/v23_interrupted_namespace_binding.json"),
+        _binding(ROOT / "state/v23_environment_manifest.json"),
+        _binding(ROOT / "state/v23_environment_evidence/wsl_serving_pip_freeze.txt"),
         _binding(ROOT / "results/v23/v23_tests.xml"),
         _binding(ROOT / "results/v23/tail_analysis.json"),
         _binding(ROOT / "results/v23/ablations.json"),
@@ -154,6 +156,7 @@ def main() -> None:
         "status": "QUALIFICATION_PROTOCOL_FROZEN",
         "source_commit": git_commit,
         "dependencies": _binding(ROOT / "uv.lock"),
+        "serving_environment": _binding(ROOT / "state/v23_environment_evidence/wsl_serving_pip_freeze.txt"),
         "qwen": {"model": serving["model"], "revision": serving["revision"]},
         "serving": {
             "vllm_version": serving["vllm_version"],

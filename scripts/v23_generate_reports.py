@@ -100,7 +100,8 @@ def main() -> None:
         f"in `results/v23/tail_analysis.json`. Current winner: `{tail.get('winner', 'not selected')}`. "
         f"Association classification: `{tail.get('tail_determination', {}).get('classification', 'not run')}`; "
         "this is component association, not causal identification. Block-bootstrap sensitivity: "
-        f"`{json.dumps(tail.get('p95_block_bootstrap_sensitivity', {}), sort_keys=True)}`.",
+        f"`{json.dumps(tail.get('p95_block_bootstrap_sensitivity', {}), sort_keys=True)}`. "
+        f"Thermal/power interpretation: {tail.get('tail_determination', {}).get('thermal_note', 'not analyzed')}",
     )
     counts: dict[str, int] = {}
     for item in historical.get("failures", []):

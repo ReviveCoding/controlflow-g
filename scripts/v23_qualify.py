@@ -383,6 +383,12 @@ def main() -> None:
             "artifact_bindings": [
                 file_binding(ROOT, path)
                 for path in (
+                    runtime_path,
+                    truth_path,
+                    evidence_path,
+                    authorization_path,
+                    directory / "manifest.json",
+                    contamination_path,
                     output_path,
                     preflight_path,
                     metrics_path,
