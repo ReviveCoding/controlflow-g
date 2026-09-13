@@ -1,0 +1,26 @@
+* text=auto
+
+# Linux / WSL execution
+*.sh   text eol=lf
+
+# Cross-platform source/config
+*.py   text eol=lf
+*.yaml text eol=lf
+*.yml  text eol=lf
+*.toml text eol=lf
+*.json text eol=lf
+*.md   text eol=lf
+
+# Native Windows scripts
+*.ps1  text eol=crlf
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+
+# Binary/data artifacts
+*.parquet -text
+*.joblib  -text
+*.pkl     -text
+*.png     -text
+*.jpg     -text
+*.jpeg    -text
+*.pdf     -text
