@@ -45,8 +45,19 @@ def _committed_exact(path: Path) -> bool:
     )
     if not tracked:
         return False
-    committed = subprocess.run(["git", "show", f"HEAD:{relative}"], cwd=ROOT, check=True, capture_output=True).stdout
-    return committed == path.read_bytes()
+    committed_hash = subprocess.run(
+        ["git", "rev-parse", f"HEAD:{relative}"], cwd=ROOT, check=True, capture_output=True, text=True
+    ).stdout.strip()
+    # Compare canonical Git blobs so configured clean filters (notably CRLF
+    # normalization) do not turn an unchanged checkout into a false mismatch.
+    working_hash = subprocess.run(
+        ["git", "hash-object", "--path", relative, relative],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    return committed_hash == working_hash
 
 
 def _verified_preconditions() -> tuple[dict, dict, dict, dict]:
