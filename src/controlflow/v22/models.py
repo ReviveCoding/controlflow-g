@@ -180,7 +180,7 @@ def train_models(
     gpu_evidence: dict[str, Any] = {"requested": allow_gpu, "xgboost_cuda_ran": False, "device": None}
     if allow_gpu:
         xgb_model, xgb_probabilities = _try_xgboost(train_x, train_critical, validation_x)
-        booster_config = xgb_model.classifier.get_booster().save_config()
+        booster_config = xgb_model["classifier"].get_booster().save_config()
         if '"device":"cuda' not in booster_config:
             raise RuntimeError("XGBOOST_REQUIRED_CUDA_NOT_CONFIRMED")
         candidates["xgboost_cuda"] = (xgb_model, xgb_probabilities)
