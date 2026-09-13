@@ -32,3 +32,5 @@ state/*.jsonl
 state/*.lock
 state/audit_trust/
 reports/figures/*.png
+data/v21/
+data/v22/
