@@ -94,7 +94,7 @@ def _truth(latent: Latent) -> dict[str, Any]:
         + 0.18 * float(latent.privilege_violation)
         + 0.08 * float(latent.conflict_state)
     )
-    critical = risk >= 0.48 or (latent.privilege_violation and latent.customer_impact >= 0.35)
+    critical = risk >= 0.44 or (latent.privilege_violation and latent.customer_impact >= 0.35)
     severity = "CRITICAL" if critical else "HIGH" if risk >= 0.37 else "MEDIUM" if risk >= 0.22 else "LOW"
     evidence_sufficient = latent.evidence_quality >= 0.30
     if latent.privilege_violation:
@@ -186,15 +186,15 @@ def generate_split(directory: Path, *, role: str, count: int, seed: int, prefix:
         event_time, system_time, expected_policy, temporal_scenario = _era(index + seed)
         family = CONTROL_FAMILIES[(index + seed) % len(CONTROL_FAMILIES)]
         unit = BUSINESS_UNITS[(index // 3 + seed) % len(BUSINESS_UNITS)]
-        failures = max(0, round(1 + 12 * latent.control_break + rng.gauss(0, 1.0)))
-        test_count = max(failures, round(20 + 35 * rng.random()))
-        incidents = max(0, round(8 * latent.repeat_failure + rng.gauss(0, 1.2)))
-        anomaly_count = max(0, round(2 + 18 * latent.control_break + 7 * latent.customer_impact + rng.gauss(0, 1.5)))
+        test_count = 40 + rng.randrange(21)
+        failures = max(0, min(test_count, round(test_count * _clip(latent.control_break + rng.gauss(0, 0.02)))))
+        incidents = max(0, round(10 * latent.repeat_failure + rng.gauss(0, 0.5)))
+        anomaly_count = max(0, round(2 + 18 * latent.control_break + 7 * latent.customer_impact + rng.gauss(0, 1.0)))
         affected = max(0, round(1500 * latent.customer_impact + rng.gauss(0, 100)))
         privileged_event_count = max(0, round(12 * float(latent.privilege_violation) + rng.gauss(0.5, 0.8)))
-        repeat_exception_ratio = _clip(latent.repeat_failure + rng.gauss(0, 0.025))
-        customer_impact_signal = _clip(latent.customer_impact + rng.gauss(0, 0.025))
-        policy_risk_signal = _clip(latent.policy_severity + rng.gauss(0, 0.025))
+        repeat_exception_ratio = _clip(latent.repeat_failure + rng.gauss(0, 0.01))
+        customer_impact_signal = _clip(latent.customer_impact + rng.gauss(0, 0.01))
+        policy_risk_signal = _clip(latent.policy_severity + rng.gauss(0, 0.01))
         amount_variance = max(0.0, 120000 * latent.customer_impact * latent.policy_severity + rng.gauss(0, 8000))
         scope_difference = _clip(0.75 * float(latent.privilege_violation) + rng.gauss(0.08, 0.13))
         quality_signal = _clip(latent.evidence_quality + rng.gauss(0, 0.13))
