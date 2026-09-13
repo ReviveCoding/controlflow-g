@@ -55,22 +55,24 @@ def _target(runtime_path: Path, truth_path: Path, column: str) -> tuple[pd.DataF
 
 def _critical_threshold(y: np.ndarray, probabilities: np.ndarray) -> tuple[float, dict[str, float]]:
     candidates = np.unique(np.concatenate(([0.0, 1.0], probabilities)))
-    eligible: list[tuple[float, float, float]] = []
+    eligible: list[tuple[float, float, float, float]] = []
     for threshold in candidates:
         prediction = probabilities >= threshold
         recall = float(recall_score(y, prediction, zero_division=0))
         negatives = y == 0
         fpr = float(np.mean(prediction[negatives])) if negatives.any() else 0.0
         if recall >= 0.95:
-            eligible.append((fpr, -float(threshold), recall))
+            residual_critical_risk = 1.0 - recall
+            operational_burden = fpr + 4.0 * residual_critical_risk
+            eligible.append((operational_burden, fpr, -float(threshold), recall))
     if not eligible:
         raise RuntimeError("no calibration-only threshold meets critical recall >= 0.95")
-    fpr, negative_threshold, recall = min(eligible)
+    operational_burden, fpr, negative_threshold, recall = min(eligible)
     return -negative_threshold, {
         "critical_recall": recall,
         "false_positive_rate": fpr,
         "residual_critical_risk": 1.0 - recall,
-        "operational_burden": fpr,
+        "operational_burden": operational_burden,
     }
 
 
@@ -309,7 +311,7 @@ def train_models(
         "selected_calibrator": calibrator_name,
         "critical_threshold": threshold,
         "threshold_rule": (
-            "CALIBRATION recall >= 0.95 then minimize false-positive rate; break ties by highest threshold"
+            "CALIBRATION recall >= 0.95 then minimize FPR + 4*residual-critical-risk; break ties by highest threshold"
         ),
         "threshold_metrics": threshold_metrics,
         "gpu_evidence": gpu_evidence,
