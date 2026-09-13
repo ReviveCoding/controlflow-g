@@ -303,13 +303,23 @@ def train_models(
             ("classifier", LogisticRegression(max_iter=1500, class_weight="balanced", random_state=22003)),
         ]
     ).fit(train_severity_x.loc[mask], train_severity.loc[mask])
+    unweighted_logistic_noncritical = Pipeline(
+        [
+            ("features", _features()),
+            ("classifier", LogisticRegression(max_iter=1500, random_state=22008)),
+        ]
+    ).fit(train_severity_x.loc[mask], train_severity.loc[mask])
     validation_severity_x, validation_severity = _target(validation_runtime, validation_truth, "truth_severity")
     validation_noncritical_mask = validation_severity != "CRITICAL"
     noncritical_candidates: dict[str, tuple[Any, np.ndarray]] = {
         "weighted_logistic": (
             logistic_noncritical,
             logistic_noncritical.predict(validation_severity_x.loc[validation_noncritical_mask]),
-        )
+        ),
+        "unweighted_logistic": (
+            unweighted_logistic_noncritical,
+            unweighted_logistic_noncritical.predict(validation_severity_x.loc[validation_noncritical_mask]),
+        ),
     }
     if allow_gpu:
         xgb_noncritical, xgb_predictions = _try_noncritical_xgboost(
