@@ -38,6 +38,20 @@ from controlflow.v23.vllm_client import AttributedVllmClient
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _same_committed_bytes(committed: bytes, working: bytes) -> bool:
+    if committed == working:
+        return True
+    # Use a fixed, local text-EOL rule. Never delegate this integrity decision
+    # to mutable Git attributes or clean-filter configuration.
+    if b"\x00" in committed or b"\x00" in working:
+        return False
+    committed_lf = committed.replace(b"\r\n", b"\n")
+    working_lf = working.replace(b"\r\n", b"\n")
+    if b"\r" in committed_lf or b"\r" in working_lf:
+        return False
+    return committed_lf == working_lf
+
+
 def _committed_exact(path: Path) -> bool:
     relative = path.relative_to(ROOT).as_posix()
     tracked = (
@@ -45,19 +59,9 @@ def _committed_exact(path: Path) -> bool:
     )
     if not tracked:
         return False
-    committed_hash = subprocess.run(
-        ["git", "rev-parse", f"HEAD:{relative}"], cwd=ROOT, check=True, capture_output=True, text=True
-    ).stdout.strip()
-    # Compare canonical Git blobs so configured clean filters (notably CRLF
-    # normalization) do not turn an unchanged checkout into a false mismatch.
-    working_hash = subprocess.run(
-        ["git", "hash-object", "--path", relative, relative],
-        cwd=ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
-    return committed_hash == working_hash
+    committed = subprocess.run(["git", "show", f"HEAD:{relative}"], cwd=ROOT, check=True, capture_output=True).stdout
+    working = path.read_bytes()
+    return _same_committed_bytes(committed, working)
 
 
 def _verified_preconditions() -> tuple[dict, dict, dict, dict]:

@@ -13,6 +13,19 @@ from controlflow.v23.dgp import ADVERSARIAL, OOD, TEMPLATES, generate_v23_split
 from controlflow.v23.integrity import file_binding, verify_file_bindings, verify_request_diagnostics
 
 
+def test_committed_byte_comparison_allows_only_fixed_text_eol_normalization() -> None:
+    import sys
+
+    root = Path(__file__).resolve().parents[2]
+    sys.path.insert(0, str(root / "scripts"))
+    from v23_qualify import _same_committed_bytes
+
+    assert _same_committed_bytes(b"one\ntwo\n", b"one\r\ntwo\r\n")
+    assert not _same_committed_bytes(b"one\ntwo\n", b"one\r\nchanged\r\n")
+    assert not _same_committed_bytes(b"binary\x00\r\n", b"binary\x00\n")
+    assert not _same_committed_bytes(b"one\ntwo\n", b"one\rtwo\n")
+
+
 def test_file_binding_detects_mutation(tmp_path: Path) -> None:
     path = tmp_path / "bound.txt"
     path.write_text("before", encoding="utf-8")
