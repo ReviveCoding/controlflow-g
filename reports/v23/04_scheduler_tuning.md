@@ -19,4 +19,6 @@ The tournament records balanced/interactivity and 1024/2048/4096 batched-token e
 - `stage_b_balanced_minimal_enum_128_b2048_warm_400`: n=400, total P95=8.336s, structured failure=0.0000, Core STC=0.8100.
 - `stage_b_interactivity_minimal_enum_128_b2048_warm_400_r2`: n=400, total P95=8.022s, structured failure=0.0000, Core STC=0.8100.
 - `stage_c_selected_interactivity_minimal_128_b2048_r22_warm_600_independent`: n=600, total P95=6.169s, structured failure=0.0000, Core STC=0.8433.
+- `stage_c_selected_interactivity_minimal_128_b2048_r22_warm_600_periodic_r6_independent`: n=600, total P95=6.472s, structured failure=0.0000, Core STC=0.8433.
+- `stage_c_selected_interactivity_minimal_128_b2048_r23_warm_600_periodic_r5`: n=600, total P95=7.438s, structured failure=0.0000, Core STC=0.8133.
 - `stage_c_selected_interactivity_minimal_128_b2048_r23_warm_600_recovery_r3`: n=600, total P95=6.448s, structured failure=0.0000, Core STC=0.8133.

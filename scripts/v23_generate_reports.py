@@ -32,6 +32,7 @@ def main() -> None:
     tournament = load("state/v23_serving_tournament.json") or {}
     attribution = load("state/v23_latency_attribution.json") or {}
     tail = load("results/v23/tail_analysis.json") or {}
+    ablations = load("results/v23/ablations.json") or {}
     historical = load("results/v23/v22qual_structured_failure_diagnostics.json") or {}
     reviews = load("state/v23_review_findings.json") or {}
     qualification = load("state/v23_qualification_manifest.json") or {}
@@ -39,9 +40,13 @@ def main() -> None:
     final = load("results/v23/final_metrics.json")
     configs = tournament.get("configurations", [])
     lines = "\n".join(config_line(item) for item in configs) or "No completed benchmark summaries."
-    baseline = next((item for item in configs if item["config_id"] == "baseline_v22_cold_60_r2"), None)
+    current_schema = next(
+        (item for item in configs if item["config_id"] == "ablation_interactivity_current_schema_160_b2048_warm_60"),
+        None,
+    )
     valid_minimal = next(
-        (item for item in configs if item["config_id"] == "p0_balanced_minimal_enum_128_b2048_warm_60"), None
+        (item for item in configs if item["config_id"] == "ablation_interactivity_minimal_enum_160_b2048_warm_60"),
+        None,
     )
     write(
         "01_latency_attribution.md",
@@ -59,10 +64,11 @@ def main() -> None:
         "fixed development-only warm-up inputs.",
     )
     output_body = "E0 and E1 have not both completed."
-    if baseline and valid_minimal:
+    if current_schema and valid_minimal:
         output_body = (
-            f"The exact V2.2 current-schema cold baseline measured {baseline['total_p95_seconds']:.3f}s total P95. "
-            f"The semantically verified minimal enum contract measured {valid_minimal['total_p95_seconds']:.3f}s "
+            "In the paired interactivity/160-token ablation, the current schema measured "
+            f"{current_schema['total_p95_seconds']:.3f}s total P95 and the semantically verified minimal enum "
+            f"contract measured {valid_minimal['total_p95_seconds']:.3f}s "
             f"with structured failure {valid_minimal['structured_failure_rate']:.4f}. Deterministic safety fields "
             "remain assembled by the typed pipeline; the LLM returns only the summary and constrained evidence count."
         )
@@ -91,7 +97,10 @@ def main() -> None:
         "07_tail_analysis.md",
         "V2.3 Tail Analysis",
         "Machine-readable top 1%, 5%, and 10% groups, correlations, category counts, telemetry, and vLLM deltas are "
-        f"in `results/v23/tail_analysis.json`. Current winner: `{tail.get('winner', 'not selected')}`.",
+        f"in `results/v23/tail_analysis.json`. Current winner: `{tail.get('winner', 'not selected')}`. "
+        f"Association classification: `{tail.get('tail_determination', {}).get('classification', 'not run')}`; "
+        "this is component association, not causal identification. Block-bootstrap sensitivity: "
+        f"`{json.dumps(tail.get('p95_block_bootstrap_sensitivity', {}), sort_keys=True)}`.",
     )
     counts: dict[str, int] = {}
     for item in historical.get("failures", []):
@@ -108,7 +117,11 @@ def main() -> None:
     write(
         "09_ablations.md",
         "V2.3 Paired Serving Ablations",
-        "Completed configuration summaries below bind the paired development serving evidence.\n\n" + lines,
+        "The machine-readable paired table includes P50/P90/P95/P99, TTFT, ITL, request/token throughput, "
+        "completion tokens, structured validity, Core STC, and GPU telemetry. Paired deltas: `"
+        + json.dumps(ablations.get("comparisons", []), sort_keys=True)
+        + "`.\n\n"
+        + lines,
     )
     write(
         "10_review_disposition.md",

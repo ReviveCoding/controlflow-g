@@ -10,7 +10,7 @@ import pandas as pd
 from scipy.stats import spearmanr
 
 from controlflow.core.state import atomic_write_json, sha256_file, utc_now
-from controlflow.v23.latency import tail_membership
+from controlflow.v23.latency import block_bootstrap_quantile_ci, percentile_summary, tail_membership
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -79,6 +79,36 @@ def _join_telemetry(requests: pd.DataFrame, path: Path) -> pd.DataFrame:
     return joined
 
 
+def _join_periodic_metrics(requests: pd.DataFrame, path: Path) -> pd.DataFrame:
+    if not path.is_file():
+        return requests
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    rows = []
+    for snapshot in payload.get("samples", []):
+        totals = _metric_totals(snapshot)
+        queries = totals.get("vllm:prefix_cache_queries_total", 0.0)
+        rows.append(
+            {
+                "epoch": pd.Timestamp(snapshot["captured_at"]).timestamp(),
+                "periodic_kv_cache_usage_perc": totals.get("vllm:kv_cache_usage_perc"),
+                "periodic_prefix_cache_hit_rate": None
+                if queries <= 0
+                else totals.get("vllm:prefix_cache_hits_total", 0.0) / queries,
+                "periodic_requests_waiting": totals.get("vllm:num_requests_waiting"),
+            }
+        )
+    periodic = pd.DataFrame(rows).dropna(subset=["epoch"])
+    if periodic.empty:
+        return requests
+    joined = requests.copy()
+    for index, row in joined.iterrows():
+        midpoint = (float(row.request_start) + float(row.request_end)) / 2
+        match = periodic.loc[(periodic.epoch - midpoint).abs().idxmin()]
+        for column in ("periodic_kv_cache_usage_perc", "periodic_prefix_cache_hit_rate", "periodic_requests_waiting"):
+            joined.loc[index, column] = match[column]
+    return joined
+
+
 def _normalize_request_metrics(requests: pd.DataFrame) -> pd.DataFrame:
     """Backfill normalized seconds fields from retained raw vLLM request metrics."""
     normalized = requests.copy()
@@ -120,6 +150,9 @@ def _correlations(frame: pd.DataFrame) -> dict[str, Any]:
         "gpu_power_draw_w_mean",
         "gpu_sm_clock_mhz_mean",
         "gpu_memory_clock_mhz_mean",
+        "periodic_kv_cache_usage_perc",
+        "periodic_prefix_cache_hit_rate",
+        "periodic_requests_waiting",
     )
     output = {}
     for column in candidates:
@@ -140,28 +173,51 @@ def main() -> None:
     summaries = []
     for path in sorted((ROOT / "results/v23").glob("*/summary.json")):
         payload = json.loads(path.read_text(encoding="utf-8"))
-        summaries.append(
-            {
-                "config_id": payload["config_id"],
-                "requests": payload["requests"],
-                "configuration": payload["configuration"],
-                "warmup": payload["warmup"],
-                "total_p95_seconds": payload["latency_seconds"]["total"]["p95"],
-                "llm_p95_seconds": payload["latency_seconds"]["llm"]["p95"],
-                "total_p95_ci": payload["latency_seconds"]["total_p95_bootstrap_ci"],
-                "completion_tokens": payload["completion_tokens"],
-                "structured_failure_rate": payload["structured_failure_rate"],
-                "core_stc": payload["quality_metrics"]["core_stc"]["estimate"],
-                "security": payload["quality_metrics"]["security"],
-                "summary_sha256": sha256_file(path),
+        row = {
+            "config_id": payload["config_id"],
+            "requests": payload["requests"],
+            "configuration": payload["configuration"],
+            "warmup": payload["warmup"],
+            "total_p95_seconds": payload["latency_seconds"]["total"]["p95"],
+            "llm_p95_seconds": payload["latency_seconds"]["llm"]["p95"],
+            "total_p95_ci": payload["latency_seconds"]["total_p95_bootstrap_ci"],
+            "completion_tokens": payload["completion_tokens"],
+            "structured_failure_rate": payload["structured_failure_rate"],
+            "core_stc": payload["quality_metrics"]["core_stc"]["estimate"],
+            "security": payload["quality_metrics"]["security"],
+            "summary_sha256": sha256_file(path),
+        }
+        attribution_path = path.parent / "request_attribution.json"
+        telemetry_path = path.parent / "nvidia_telemetry.json"
+        if attribution_path.is_file():
+            request_rows = json.loads(attribution_path.read_text(encoding="utf-8"))["requests"]
+            normalized = _normalize_request_metrics(pd.DataFrame(request_rows))
+            elapsed = float(normalized.request_end.max() - normalized.request_start.min())
+            row.update(
+                {
+                    "total_latency": percentile_summary(normalized.total_latency_seconds),
+                    "ttft": percentile_summary(normalized.ttft_seconds.dropna()),
+                    "itl": percentile_summary(normalized.inter_token_latency_seconds.dropna()),
+                    "request_throughput_per_second": len(normalized) / elapsed if elapsed > 0 else None,
+                    "completion_token_throughput_per_second": float(normalized.completion_tokens.sum()) / elapsed
+                    if elapsed > 0
+                    else None,
+                }
+            )
+        if telemetry_path.is_file():
+            gpu = pd.DataFrame(json.loads(telemetry_path.read_text(encoding="utf-8"))["samples"])
+            row["gpu_telemetry_means"] = {
+                name: float(pd.to_numeric(gpu[name], errors="coerce").mean())
+                for name in ("utilization_gpu_percent", "temperature_c", "power_draw_w", "sm_clock_mhz")
             }
-        )
+        summaries.append(row)
     winner_dir = ROOT / "results/v23" / args.winner
     if not (winner_dir / "summary.json").is_file():
         raise RuntimeError("winner summary is absent")
     requests_payload = json.loads((winner_dir / "request_attribution.json").read_text(encoding="utf-8"))
     request_frame = _normalize_request_metrics(pd.DataFrame(requests_payload["requests"]))
     request_frame = _join_telemetry(request_frame, winner_dir / "nvidia_telemetry.json")
+    request_frame = _join_periodic_metrics(request_frame, winner_dir / "vllm_metrics_periodic.json")
     tails = tail_membership(request_frame.to_dict(orient="records"))
     tail_summary = []
     for tail in tails:
@@ -205,6 +261,13 @@ def main() -> None:
     rho = {name: item["spearman_rho"] for name, item in correlations.items()}
     decode_driven = abs(rho.get("decode_time_seconds", 0.0)) >= 0.5
     host_driven = abs(rho.get("non_llm_pipeline_latency_seconds", 0.0)) >= 0.4
+    cache_associated = (
+        max(
+            abs(rho.get("periodic_kv_cache_usage_perc", 0.0)),
+            abs(rho.get("periodic_prefix_cache_hit_rate", 0.0)),
+        )
+        >= 0.3
+    )
     if decode_driven and host_driven:
         classification = "MIXED_GENERATION_AND_HOST_PIPELINE"
     elif decode_driven:
@@ -215,14 +278,18 @@ def main() -> None:
         classification = "MIXED_WEAK_SIGNALS"
     tail_determination = {
         "classification": classification,
+        "evidence_basis": "component association; not a causal attribution",
+        "explicit_interpretive_thresholds": {"decode_absolute_spearman_rho": 0.5, "host_absolute_spearman_rho": 0.4},
         "request_size_driven": False,
         "request_size_note": "Prompt-token correlation is weak; completion-token correlation is small.",
         "scheduler_queue_driven": False,
         "scheduler_note": "Mean vLLM queue time is sub-millisecond despite a modest correlation.",
         "generation_driven": decode_driven,
         "host_pipeline_driven": host_driven,
-        "cache_driven": None,
-        "cache_note": "Aggregate prefix hit rate is available; the server did not expose a per-request hit indicator.",
+        "cache_driven": cache_associated,
+        "cache_note": (
+            "Nearest periodic cache samples provide association only; no per-request hit indicator is exposed."
+        ),
         "thermal_or_power_driven": False,
         "thermal_note": (
             "Temperature correlation is modest and power/SM-clock correlations do not support a thermal cause."
@@ -237,6 +304,9 @@ def main() -> None:
         "gpu_telemetry_summary": telemetry_summary,
         "vllm_metric_deltas": metrics,
         "tail_determination": tail_determination,
+        "p95_block_bootstrap_sensitivity": block_bootstrap_quantile_ci(
+            request_frame.total_latency_seconds, block_size=20
+        ),
         "thermal_throttling_claimed": False,
         "thermal_note": (
             "No thermal cause is assigned automatically; clock, power, and temperature evidence require review."
@@ -248,8 +318,9 @@ def main() -> None:
         {
             "schema_version": 1,
             "created_at": utc_now(),
-            "status": "DEVELOPMENT_TOURNAMENT_IN_PROGRESS",
+            "status": "DEVELOPMENT_TOURNAMENT_COMPLETE",
             "winner_under_evaluation": args.winner,
+            "selected_winner": args.winner,
             "configurations": summaries,
         },
     )
@@ -270,6 +341,47 @@ def main() -> None:
             "vllm_metrics": metrics,
             "gpu_telemetry_summary": telemetry_summary,
         },
+    )
+    by_id = {item["config_id"]: item for item in summaries}
+    pair_ids = {
+        "BALANCED_vs_INTERACTIVITY": (
+            "p0_balanced_minimal_enum_128_b2048_warm_60",
+            "p1_interactivity_minimal_enum_128_b2048_warm_60",
+        ),
+        "CURRENT_SCHEMA_vs_MINIMAL_SCHEMA": (
+            "ablation_interactivity_current_schema_160_b2048_warm_60",
+            "ablation_interactivity_minimal_enum_160_b2048_warm_60",
+        ),
+        "CURRENT_TOKEN_CAP_vs_SELECTED_TOKEN_CAP": (
+            "ablation_interactivity_minimal_enum_160_b2048_warm_60",
+            "p1_interactivity_minimal_enum_128_b2048_warm_60",
+        ),
+        "DEFAULT_BATCHED_TOKENS_vs_SELECTED_BATCHED_TOKENS": (
+            "ablation_interactivity_minimal_128_installed_default_batch_warm_60",
+            "p1_interactivity_minimal_enum_128_b2048_warm_60",
+        ),
+        "COLD_vs_WARM": (
+            "ablation_selected_interactivity_minimal_128_b2048_cold_60",
+            "p1_interactivity_minimal_enum_128_b2048_warm_60",
+        ),
+    }
+    comparisons = []
+    for name, (left_id, right_id) in pair_ids.items():
+        left, right = by_id[left_id], by_id[right_id]
+        comparisons.append(
+            {
+                "comparison": name,
+                "left": left_id,
+                "right": right_id,
+                "p95_delta_seconds_right_minus_left": right["total_p95_seconds"] - left["total_p95_seconds"],
+                "structured_failure_delta": right["structured_failure_rate"] - left["structured_failure_rate"],
+                "completion_token_mean_delta": right["completion_tokens"]["mean"] - left["completion_tokens"]["mean"],
+                "core_stc_delta": right["core_stc"] - left["core_stc"],
+            }
+        )
+    atomic_write_json(
+        ROOT / "results/v23/ablations.json",
+        {"schema_version": 1, "created_at": utc_now(), "configurations": summaries, "comparisons": comparisons},
     )
 
 

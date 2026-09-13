@@ -12,6 +12,7 @@ batched_tokens="${V23_BATCHED_TOKENS:-2048}"
 optimization_level="${V23_OPTIMIZATION_LEVEL:-2}"
 prefix_caching="${V23_PREFIX_CACHING:-1}"
 port="${V23_PORT:-8023}"
+run_role="${V23_RUN_ROLE:-development}"
 
 if nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits | grep -q '[0-9]'; then
   echo "GPU has an existing compute consumer; refusing to launch or kill it" >&2
@@ -30,6 +31,7 @@ batched_args=()
 if [[ "$batched_tokens" != "default" ]]; then batched_args=(--max-num-batched-tokens "$batched_tokens"); fi
 
 export VLLM_USE_V2_MODEL_RUNNER=0
+export V23_RUN_ROLE="$run_role"
 "$env_dir/bin/vllm" serve "$model" \
   --revision "$revision" \
   --served-model-name controlflow-g-v23-qwen3-4b \

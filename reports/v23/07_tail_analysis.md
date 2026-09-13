@@ -1,3 +1,3 @@
 # V2.3 Tail Analysis
 
-Machine-readable top 1%, 5%, and 10% groups, correlations, category counts, telemetry, and vLLM deltas are in `results/v23/tail_analysis.json`. Current winner: `stage_c_selected_interactivity_minimal_128_b2048_r23_warm_600_recovery_r3`.
+Machine-readable top 1%, 5%, and 10% groups, correlations, category counts, telemetry, and vLLM deltas are in `results/v23/tail_analysis.json`. Current winner: `stage_c_selected_interactivity_minimal_128_b2048_r23_warm_600_periodic_r5`. Association classification: `MIXED_GENERATION_AND_HOST_PIPELINE`; this is component association, not causal identification. Block-bootstrap sensitivity: `{"block_size": 20, "count": 600, "estimate": 7.4380781650193954, "lower": 6.487320599990198, "upper": 7.950910081883776}`.

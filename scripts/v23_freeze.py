@@ -53,6 +53,12 @@ def main() -> None:
         "unresolved_HIGH": 0,
     }:
         raise RuntimeError("pre-qualification reviews are not clear")
+    prequalification_review_path = ROOT / "state/v23_prequalification_review_findings.json"
+    if prequalification_review_path.exists():
+        if json.loads(prequalification_review_path.read_text(encoding="utf-8")) != reviews:
+            raise RuntimeError("immutable pre-qualification review record already differs")
+    else:
+        atomic_write_json(prequalification_review_path, reviews)
     summaries = []
     for config_id in (args.primary, args.independent):
         path = ROOT / "results/v23" / config_id / "summary.json"
@@ -91,6 +97,13 @@ def main() -> None:
         raise RuntimeError("set frozen_before_qualification before creating freeze evidence")
     bindings = [
         _binding(ROOT / "state/v23_typed_core_manifest.json"),
+        _binding(ROOT / "state/v23_integrity.json"),
+        _binding(prequalification_review_path),
+        _binding(ROOT / "state/v23_historical_boundary.json"),
+        _binding(ROOT / "state/v23_interrupted_namespace_binding.json"),
+        _binding(ROOT / "results/v23/v23_tests.xml"),
+        _binding(ROOT / "results/v23/tail_analysis.json"),
+        _binding(ROOT / "results/v23/ablations.json"),
         _binding(serving_path),
         _binding(ROOT / "configs/v23/explanation_schema_minimal.json"),
         _binding(ROOT / "configs/v23/explanation_prompt_minimal.txt"),
@@ -102,10 +115,37 @@ def main() -> None:
         _binding(ROOT / "src/controlflow/v22/approval.py"),
         _binding(ROOT / "src/controlflow/v22/executor.py"),
         _binding(ROOT / "src/controlflow/v22/evaluation.py"),
+        _binding(ROOT / "artifacts/v22/approval_public_key.pem"),
         _binding(ROOT / "src/controlflow/v23/vllm_client.py"),
+        _binding(ROOT / "src/controlflow/v23/integrity.py"),
+        _binding(ROOT / "src/controlflow/v23/telemetry.py"),
+        _binding(ROOT / "src/controlflow/v23/dgp.py"),
         _binding(ROOT / "scripts/v23_server.sh"),
+        _binding(ROOT / "scripts/v23_benchmark.py"),
+        _binding(ROOT / "scripts/v23_freeze.py"),
         _binding(ROOT / "scripts/v23_qualify.py"),
+        _binding(ROOT / "scripts/v23_prepare_final.py"),
+        _binding(ROOT / "scripts/v23_final.py"),
+        _binding(ROOT / "scripts/v23_record_integrity.py"),
+        _binding(ROOT / "configs/v23/temporal_truth_fixtures.yaml"),
     ]
+    typed = json.loads((ROOT / "state/v23_typed_core_manifest.json").read_text(encoding="utf-8"))
+    bindings.extend(_binding(ROOT / item["path"]) for item in typed["bindings"].values())
+    bindings.append(_binding(ROOT / typed["source_bundle"]["path"]))
+    interrupted = json.loads((ROOT / "state/v23_interrupted_namespace_binding.json").read_text(encoding="utf-8"))
+    bindings.extend(_binding(ROOT / item["path"]) for item in interrupted["bindings"])
+    integrity = json.loads((ROOT / "state/v23_integrity.json").read_text(encoding="utf-8"))
+    for cohort in integrity["development_cohorts"]:
+        bindings.extend(
+            [
+                cohort["summary"],
+                cohort["checkpoint_binding"],
+                cohort["ledger"]["binding"],
+                *cohort["request_diagnostics"]["bindings"],
+                *cohort["summary_artifact_bindings"],
+                *cohort["durable_sampler_bindings"],
+            ]
+        )
     git_commit = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=ROOT, check=True, capture_output=True, text=True
     ).stdout.strip()
@@ -142,7 +182,7 @@ def main() -> None:
             {**_binding(path), "p95_seconds": summary["latency_seconds"]["total"]["p95"]} for path, summary in summaries
         ],
         "bindings": bindings,
-        "qualification_seed": 23901,
+        "qualification_seed": 23907,
         "qualification_count": 600,
         "final_not_generated": True,
     }

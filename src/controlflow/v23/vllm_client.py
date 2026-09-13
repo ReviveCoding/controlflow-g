@@ -52,7 +52,9 @@ class AttributedVllmClient:
             self.diagnostics.clear()
             if self.diagnostics_path is not None:
                 self.diagnostics_path.parent.mkdir(parents=True, exist_ok=True)
-                self.diagnostics_path.write_text("", encoding="utf-8")
+                with self.diagnostics_path.open("w", encoding="utf-8") as stream:
+                    stream.flush()
+                    os.fsync(stream.fileno())
 
     def __call__(self, inputs: dict[str, Any]) -> tuple[str, bool, float, tuple[str, ...]]:
         prompt = self.prompt_template.replace("{{INPUT_JSON}}", json.dumps(inputs, sort_keys=True))

@@ -12,14 +12,14 @@ import pandas as pd
 import yaml
 
 from controlflow.core.state import atomic_write_json, sha256_file, utc_now
-from controlflow.v22.approval import ApprovalIssuer
 from controlflow.v22.candidate import CandidateExecutionWorkflow
 from controlflow.v22.checkpoint import git_state
 from controlflow.v22.evaluation import evaluate, evaluator_protocol_hash
 from controlflow.v22.runtime import build_candidate_runtime
 from controlflow.v22.schemas import PolicyDecision
+from controlflow.v23.integrity import load_frozen_approval_issuer
 from controlflow.v23.latency import bootstrap_quantile_ci, parse_prometheus, percentile_summary
-from controlflow.v23.telemetry import NvidiaSampler
+from controlflow.v23.telemetry import NvidiaSampler, PrometheusSampler
 from controlflow.v23.vllm_client import AttributedVllmClient
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -47,6 +47,17 @@ def _scrape(endpoint_root: str) -> dict[str, Any]:
     response.raise_for_status()
     samples = [item for item in parse_prometheus(response.text) if item["name"].startswith("vllm:")]
     return {"captured_at": utc_now(), "samples": samples}
+
+
+def _metric_sum(snapshot: dict[str, Any], name: str) -> float:
+    return sum(float(item["value"]) for item in snapshot["samples"] if item["name"] == name)
+
+
+def _assert_cold_server(snapshot: dict[str, Any]) -> None:
+    if _metric_sum(snapshot, "vllm:request_success_total") != 0.0:
+        raise RuntimeError("LIVE_V23_SERVER_NOT_FRESH: prior completed requests exist")
+    if _metric_sum(snapshot, "vllm:prefix_cache_queries_total") != 0.0:
+        raise RuntimeError("LIVE_V23_SERVER_NOT_FRESH: prefix cache has prior queries")
 
 
 def _server_metrics(row: dict[str, Any]) -> dict[str, Any]:
@@ -85,7 +96,7 @@ def _verify_server(config: dict[str, Any], args: argparse.Namespace) -> dict[str
     models = httpx.get(f"{endpoint_root}/v1/models", timeout=20)
     models.raise_for_status()
     served = {str(item["id"]) for item in models.json()["data"]}
-    command = subprocess.run(
+    process_output = subprocess.run(
         [
             "wsl.exe",
             "-d",
@@ -100,6 +111,11 @@ def _verify_server(config: dict[str, Any], args: argparse.Namespace) -> dict[str
         capture_output=True,
         text=True,
     ).stdout.strip()
+    process_lines = [line for line in process_output.splitlines() if "vllm serve" in line]
+    if len(process_lines) != 1:
+        raise RuntimeError(f"LIVE_V23_SERVER_PROCESS_COUNT_MISMATCH:{len(process_lines)}")
+    command = process_lines[0]
+    pid = int(command.split(maxsplit=1)[0])
     expected = [
         config["revision"],
         f"--served-model-name {config['served_model_name']}",
@@ -127,12 +143,59 @@ def _verify_server(config: dict[str, Any], args: argparse.Namespace) -> dict[str
     verified = config["served_model_name"] in served and all(item in command for item in expected)
     if not verified:
         raise RuntimeError("LIVE_V23_SERVER_ARGUMENT_MISMATCH")
+    version = subprocess.run(
+        [
+            "wsl.exe",
+            "-d",
+            "Ubuntu-22.04",
+            "--",
+            "bash",
+            "-lc",
+            '"$HOME/.venvs/controlflow-g-v2/bin/python" -c "import vllm; print(vllm.__version__)"',
+        ],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    environment = subprocess.run(
+        [
+            "wsl.exe",
+            "-d",
+            "Ubuntu-22.04",
+            "--",
+            "bash",
+            "-lc",
+            f"tr '\\0' '\\n' < /proc/{pid}/environ | grep -E '^(V23_RUN_ROLE|VLLM_USE_V2_MODEL_RUNNER)='",
+        ],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    expected_role = getattr(args, "run_role", None)
+    if version != config["vllm_version"] or "VLLM_USE_V2_MODEL_RUNNER=0" not in environment:
+        raise RuntimeError("LIVE_V23_SERVER_ENVIRONMENT_MISMATCH")
+    if expected_role is not None and f"V23_RUN_ROLE={expected_role}" not in environment:
+        raise RuntimeError("LIVE_V23_SERVER_ROLE_MISMATCH")
+    started_at = subprocess.run(
+        ["wsl.exe", "-d", "Ubuntu-22.04", "--", "ps", "-p", str(pid), "-o", "lstart="],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
     return {
         "endpoint_root": endpoint_root,
         "served_models": sorted(served),
         "process_command": command,
         "required_arguments": expected,
         "verified": True,
+        "pid": pid,
+        "process_started_at": started_at,
+        "vllm_version": version,
+        "environment": sorted(environment),
+        "run_role": expected_role or "development",
     }
 
 
@@ -213,9 +276,7 @@ def main() -> None:
     evidence_path = ROOT / f"data/v22/{namespace}/validation/evidence_corpus.parquet"
     authorization_path = ROOT / f"data/v22/{namespace}/validation/authorization_state.parquet"
     runtime = pd.read_parquet(runtime_path).head(args.requests)
-    issuer = ApprovalIssuer.create_ephemeral(
-        ROOT / "artifacts/v22/local_keys", ROOT / "artifacts/v22/approval_public_key.pem"
-    )
+    issuer = load_frozen_approval_issuer(ROOT)
     ledger = artifact_dir / "development.sqlite"
     candidate, _executor, bundle = build_candidate_runtime(
         root=ROOT,
@@ -270,7 +331,11 @@ def main() -> None:
         "seed": namespace,
         "concurrency": 2,
     }
-    with NvidiaSampler(telemetry_path, interval_seconds=1.0):
+    periodic_metrics_path = output_dir / "vllm_metrics_periodic.json"
+    with (
+        NvidiaSampler(telemetry_path, interval_seconds=1.0),
+        PrometheusSampler(live["endpoint_root"], periodic_metrics_path, interval_seconds=5.0),
+    ):
         results = runner.run_dataset(
             runtime,
             output_path=result_path,
@@ -382,6 +447,14 @@ def main() -> None:
                 "sha256": sha256_file(request_path),
             },
             "telemetry": {"path": telemetry_path.relative_to(ROOT).as_posix(), "sha256": sha256_file(telemetry_path)},
+            "periodic_metrics": {
+                "path": periodic_metrics_path.relative_to(ROOT).as_posix(),
+                "sha256": sha256_file(periodic_metrics_path),
+            },
+            "durable_request_diagnostics": {
+                "path": client.diagnostics_path.relative_to(ROOT).as_posix(),
+                "sha256": sha256_file(client.diagnostics_path),
+            },
             "metrics_snapshots": {
                 "path": metric_snapshots_path.relative_to(ROOT).as_posix(),
                 "sha256": sha256_file(metric_snapshots_path),

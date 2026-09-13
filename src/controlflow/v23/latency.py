@@ -63,6 +63,34 @@ def bootstrap_quantile_ci(
     }
 
 
+def block_bootstrap_quantile_ci(
+    values: Iterable[float],
+    *,
+    quantile: float = 0.95,
+    block_size: int = 20,
+    seed: int = 23123,
+    samples: int = 2000,
+) -> dict[str, float | int | None]:
+    """Moving-block bootstrap sensitivity for time-ordered serving latency."""
+    clean = np.asarray([float(item) for item in values if math.isfinite(float(item))], dtype=float)
+    if not len(clean):
+        return {"count": 0, "estimate": None, "lower": None, "upper": None, "block_size": block_size}
+    size = min(max(1, block_size), len(clean))
+    blocks = np.asarray([np.take(clean, np.arange(start, start + size) % len(clean)) for start in range(len(clean))])
+    rng = np.random.default_rng(seed)
+    blocks_needed = math.ceil(len(clean) / size)
+    choices = rng.integers(0, len(blocks), size=(samples, blocks_needed))
+    resampled = blocks[choices].reshape(samples, -1)[:, : len(clean)]
+    boot = np.quantile(resampled, quantile, axis=1)
+    return {
+        "count": len(clean),
+        "estimate": float(np.quantile(clean, quantile)),
+        "lower": float(np.quantile(boot, 0.025)),
+        "upper": float(np.quantile(boot, 0.975)),
+        "block_size": size,
+    }
+
+
 def tail_membership(rows: list[dict[str, Any]], latency_key: str = "total_latency_seconds") -> list[dict[str, Any]]:
     if not rows:
         return []

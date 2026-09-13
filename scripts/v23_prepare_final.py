@@ -6,7 +6,9 @@ import subprocess
 from pathlib import Path
 
 from controlflow.core.state import atomic_write_json, canonical_json, sha256_file, utc_now
-from controlflow.v22.dgp import contamination_against_prior, generate_split, resolve_prior_runtime_paths
+from controlflow.v22.dgp import contamination_against_prior, resolve_prior_runtime_paths
+from controlflow.v23.dgp import generate_v23_split
+from controlflow.v23.integrity import verify_file_bindings
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -20,6 +22,11 @@ def main() -> None:
     qualification = json.loads(qualification_path.read_text(encoding="utf-8"))
     if qualification.get("status") != "PASS_POST_REVIEW_REQUIRED" or not qualification.get("all_passed"):
         raise RuntimeError("FINAL_PROHIBITED: V23QUAL did not pass")
+    qualification_binding_failures = verify_file_bindings(ROOT, qualification.get("artifact_bindings", []))
+    if qualification_binding_failures:
+        raise RuntimeError(
+            f"FINAL_PROHIBITED: qualification artifact bindings failed: {qualification_binding_failures}"
+        )
     reviews_path = ROOT / "state/v23_review_findings.json"
     reviews = json.loads(reviews_path.read_text(encoding="utf-8"))
     if reviews.get("status") != "POST_QUALIFICATION_CLEAR" or reviews.get("counts") != {
@@ -41,7 +48,7 @@ def main() -> None:
         ROOT / "configs/v23/prior_runtime_manifest.yaml",
         excluded_directory=directory,
     )
-    manifest = generate_split(directory, role="FINAL", count=500, seed=23999, prefix="V23FINAL")
+    manifest = generate_v23_split(directory, role="FINAL", count=500, seed=23999, prefix="V23FINAL", root=ROOT)
     runtime_path = directory / "runtime_cases.parquet"
     contamination = contamination_against_prior(runtime_path, prior_paths)
     contamination_path = ROOT / "results/v23/final_contamination.json"
@@ -78,6 +85,7 @@ def main() -> None:
         _binding(ROOT / "state/v23_typed_core_manifest.json"),
         _binding(ROOT / "uv.lock"),
     ]
+    final_bindings.extend(qualification["artifact_bindings"])
     freeze_body = {
         **{key: value for key, value in qualification_freeze.items() if key not in {"freeze_hash", "created_at"}},
         "status": "FINAL_PROTOCOL_FROZEN",

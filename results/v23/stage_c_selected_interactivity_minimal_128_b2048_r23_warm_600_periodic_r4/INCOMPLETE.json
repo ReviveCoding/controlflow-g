@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "status": "INCOMPLETE_NOT_ADMISSIBLE",
+  "completed_candidate_records": 0,
+  "failure_stage": "preflight_wsl_access",
+  "selection_use_permitted": false,
+  "qualification_evidence_use_permitted": false,
+  "disposition": "Empty immutable namespace retained; replacement uses a new namespace."
+}

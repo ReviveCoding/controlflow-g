@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "status": "INCOMPLETE_NOT_ADMISSIBLE",
+  "namespace": "stage_c_selected_interactivity_minimal_128_b2048_r23_warm_600",
+  "selection_use_permitted": false,
+  "qualification_evidence_use_permitted": false,
+  "bindings": [
+    {
+      "path": "results/v23/stage_c_selected_interactivity_minimal_128_b2048_r23_warm_600/INCOMPLETE.json",
+      "sha256": "7e7a1734ead62579c4c76b91bb3b766c332acde76608600cecbdf31771dc18e3",
+      "bytes": 521
+    },
+    {
+      "path": "artifacts/v23/stage_c_selected_interactivity_minimal_128_b2048_r23_warm_600/development.checkpoint.json",
+      "sha256": "6b037a1148d8fcd1ea1577f9a94d7049a73127614572beee8e6c54c725ca69ad",
+      "bytes": 13121
+    },
+    {
+      "path": "artifacts/v23/stage_c_selected_interactivity_minimal_128_b2048_r23_warm_600/development.partial.jsonl",
+      "sha256": "1aafadf83200d90beca06adcc0339f83df8a7471dce7356d9813dd2648705414",
+      "bytes": 446265
+    },
+    {
+      "path": "artifacts/v23/stage_c_selected_interactivity_minimal_128_b2048_r23_warm_600/development.sqlite",
+      "sha256": "d17d8fa85e94adb83112bf37440c6888787cf34d82e9457c80097aee1c8ba4e7",
+      "bytes": 1200128
+    }
+  ],
+  "ledger": {
+    "valid": true,
+    "event_count": 600,
+    "head": {
+      "sequence_id": 600,
+      "event_hash": "763e5abed98e83087c4b07a9b99ddf1ec5738dc1a38d27fb283fd4a93ba4b95c"
+    },
+    "failures": []
+  }
+}

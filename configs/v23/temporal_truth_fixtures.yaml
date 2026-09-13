@@ -1,0 +1,13 @@
+schema_version: 1
+authority: evaluator_only_v23_declarative_truth
+fixtures:
+  - {scenario: v23_historical_2021, event_time: '2021-09-17T09:30:00Z', system_time: '2021-11-08T14:00:00Z', expected_policy_id: policy-2021}
+  - {scenario: v23_future_distractor, event_time: '2022-10-19T16:45:00Z', system_time: '2026-10-02T11:15:00Z', expected_policy_id: policy-2021}
+  - {scenario: v23_pre_ingestion, event_time: '2023-01-19T10:00:00Z', system_time: '2022-12-09T08:00:00Z', expected_policy_id: null}
+  - {scenario: v23_out_of_order, event_time: '2023-05-23T13:20:00Z', system_time: '2024-09-12T17:00:00Z', expected_policy_id: policy-2023}
+  - {scenario: v23_late_correction, event_time: '2023-11-07T15:40:00Z', system_time: '2025-05-16T12:30:00Z', expected_policy_id: policy-2023-correction}
+  - {scenario: v23_historical_2024, event_time: '2024-08-14T07:50:00Z', system_time: '2024-10-03T19:00:00Z', expected_policy_id: policy-2024}
+  - {scenario: v23_current_version_bias, event_time: '2025-09-22T18:10:00Z', system_time: '2026-10-02T11:15:00Z', expected_policy_id: policy-2024}
+  - {scenario: v23_stale_cache, event_time: '2026-02-11T06:25:00Z', system_time: '2026-03-18T16:10:00Z', expected_policy_id: policy-2026}
+  - {scenario: v23_current_2026, event_time: '2026-10-06T20:05:00Z', system_time: '2026-10-12T09:45:00Z', expected_policy_id: policy-2026}
+  - {scenario: v23_invalid_overlap, event_time: '2022-06-11T12:00:00Z', system_time: '2026-10-02T11:15:00Z', expected_policy_id: null}
