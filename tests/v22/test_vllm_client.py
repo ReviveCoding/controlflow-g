@@ -15,7 +15,10 @@ class _Response:
         return None
 
     def json(self) -> dict[str, object]:
-        return {"choices": [{"message": {"content": json.dumps(self.payload)}}]}
+        return {
+            "choices": [{"message": {"content": json.dumps(self.payload)}}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
+        }
 
 
 @pytest.mark.parametrize(
@@ -51,3 +54,4 @@ def test_semantic_verifier_treats_evidence_as_an_exact_unique_set(
     )
     assert valid is expected_valid
     assert client.diagnostics[0]["semantic_reference_failure"] is (not expected_valid)
+    assert client.diagnostics[0]["usage"]["completion_tokens"] == 20

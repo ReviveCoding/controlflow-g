@@ -35,7 +35,7 @@ class StructuredVllmClient:
             "model": self.model,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0,
-            "max_tokens": 220,
+            "max_tokens": 160,
             "seed": 22022,
         }
         if self.constrained:
@@ -51,7 +51,12 @@ class StructuredVllmClient:
         try:
             response = httpx.post(self.endpoint, json=payload, timeout=90)
             response.raise_for_status()
-            content = response.json()["choices"][0]["message"]["content"]
+            response_payload = response.json()
+            content = response_payload["choices"][0]["message"]["content"]
+            usage = response_payload.get("usage", {})
+            diagnostic["usage"] = {
+                name: usage.get(name) for name in ("prompt_tokens", "completion_tokens", "total_tokens")
+            }
         except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
             elapsed = time.perf_counter() - started
             diagnostic["http_failure"] = True

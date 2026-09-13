@@ -5,9 +5,9 @@
   "required": ["case_id", "summary", "claims", "evidence_ids", "policy_id"],
   "properties": {
     "case_id": {"type": "string"},
-    "summary": {"type": "string"},
-    "claims": {"type": "array", "items": {"type": "string"}},
-    "evidence_ids": {"type": "array", "items": {"type": "string"}},
+    "summary": {"type": "string", "maxLength": 80},
+    "claims": {"type": "array", "maxItems": 4, "items": {"type": "string", "maxLength": 40}},
+    "evidence_ids": {"type": "array", "maxItems": 2, "items": {"type": "string"}},
     "policy_id": {"type": ["string", "null"]}
   }
 }

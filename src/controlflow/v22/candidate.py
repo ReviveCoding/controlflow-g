@@ -186,8 +186,8 @@ class CandidateRunner:
             idempotency_key=f"{case.case_id}:{action.action_name}:{action.workflow_version}",
         )
         deterministic = (
-            f"Observed {decision.severity.value} control exception; root cause {decision.root_cause}; "
-            f"retrieved {len(evidence_ids)} authorized evidence documents; policy {policy.decision.value}."
+            f"{decision.severity.value}/{decision.root_cause}; evidence={len(evidence_ids)}; "
+            f"decision={policy.decision.value}."
         )
         llm_latency: float | None = None
         structured_valid: bool | None = None
