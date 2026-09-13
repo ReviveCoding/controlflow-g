@@ -1,0 +1,1 @@
+{"created_at":"2026-09-13T10:26:30.542771+00:00","gate_config_path":"configs/v22/qualification_gates.yaml","gate_config_sha256":"2b9fce3aa191dd7f19cce5d1dd96ea3dcdb9922fe53a2dab9808da15c0572f17","qualification_results_present_at_freeze":false,"schema_version":1,"source_commit":"2f9e89c17aa79bfdf1ff0ffb3a8369d7ab7e76bd","status":"FROZEN_BEFORE_QUALIFICATION"}
