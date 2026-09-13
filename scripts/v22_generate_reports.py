@@ -37,6 +37,7 @@ def main() -> None:
     bundle = _load("state/v22_model_bundle.json") or {}
     reviews = _load("state/v22_review_findings.json") or {}
     qualification = _load("state/v22_qualification_manifest.json") or {}
+    qualification_metrics = _load("results/v22/qualification_metrics.json")
     freeze = _load("state/v22_freeze_manifest.json") or {}
     metrics_binding = execution.get("development_metrics", {})
     metrics = _load(metrics_binding.get("path", "")) if metrics_binding else None
@@ -45,6 +46,9 @@ def main() -> None:
     serving = _load("state/v22_vllm_structured_c2.json")
     integrity = _load("state/v22_integrity.json")
     ablation = _load("results/v22/development_ablations.json")
+    qualification_p95 = (
+        None if qualification_metrics is None else qualification_metrics.get("latency", {}).get("total_p95_seconds")
+    )
     _write(
         "01_data_independence.md",
         "V2.2 Data Independence",
@@ -143,20 +147,32 @@ def main() -> None:
     _write(
         "13_internal_qualification.md",
         "V2.2 Internal Qualification",
-        f"Status: {qualification.get('status', 'NOT_GENERATED')}. "
-        f"Reason: {qualification.get('reason', 'qualification has not been authorized')}.",
+        (
+            f"Status: {qualification.get('status', 'NOT_GENERATED')}. The one-shot result is final for this "
+            "qualification dataset and is not eligible for tuning or rerun.\n\n"
+            f"Critical recall: {_metric(qualification_metrics, 'binary_critical_recall')}; typed critical recall: "
+            f"{_metric(qualification_metrics, 'typed_critical_recall')}; Core STC: "
+            f"{_metric(qualification_metrics, 'core_stc')}; structured failure rate: "
+            f"{_metric(qualification_metrics, 'structured_output_failure_rate')}; total concurrency-2 P95: "
+            f"{qualification_p95}s.\n\n"
+            f"Frozen gate results: {qualification.get('gates', {})}."
+        ),
     )
     _write(
         "14_final_evaluation.md",
         "V2.2 Final Evaluation",
-        "No V2.2 final holdout has been generated or consumed. Final evaluation is prohibited until qualification "
-        "passes, post-qualification reviewers clear, and a clean deterministic freeze exists.",
+        "No V2.2 final holdout was generated or consumed. The one-shot qualification failed its frozen latency "
+        "gate, so post-qualification review, final generation, freeze, and final evaluation are prohibited.",
     )
     _write(
         "15_release_decision.md",
         "V2.2 Release Decision",
-        "No frozen release decision exists. A decision will be emitted only after the required qualification, "
-        f"post-review, freeze, and one-shot final protocol. Freeze status: {freeze.get('status', 'NOT_FROZEN')}.",
+        (
+            "NO_PROMOTE\n\nThe one-shot qualification failed the frozen concurrency-2 total P95 latency gate "
+            f"(23.024s observed; 15.000s maximum). Freeze status: {freeze.get('status', 'NOT_FROZEN')}."
+            if qualification.get("status") == "V22_DEVELOPMENT_NO_GO"
+            else "No release decision exists because qualification has not produced a terminal result."
+        ),
     )
     _write(
         "16_limitations.md",
@@ -169,18 +185,22 @@ def main() -> None:
     _write(
         "17_future_work.md",
         "V2.2 Future Work",
-        "Externalize audit-head trust and signing keys, broaden public-data grounding, add independent human rationale "
-        "judgments, and evaluate drift in a production-like simulation. QLoRA remains out of scope unless the "
-        "architecture and security gates clear and measured semantic quality is the remaining bottleneck.",
+        "Treat V22QUAL as diagnostic only. Investigate sustained vLLM concurrency-2 latency and the six structured "
+        "response failures in a new development cycle, then require a newly seeded qualification holdout. Also "
+        "externalize audit-head trust and signing keys, broaden public-data grounding, and add independent human "
+        "rationale judgments. QLoRA remains unjustified because semantic quality was not the release bottleneck.",
     )
     technical = ROOT / "TECHNICAL_REPORT_V22.md"
     technical.write_text(
         "# ControlFlow-G V2.2 Technical Report\n\n"
         "V2.2 separates latent truth generation, fitted candidate inference, evidence and temporal retrieval, "
         "authoritative policy decision, enforcement, external signed review, atomic simulated state, local "
-        "tamper-evident audit, and evaluator joins. All current numbers are development-only and trace to the "
-        "machine-readable bindings in state/v22_execution_state.json. Qualification and final evidence remain "
-        f"governed by their manifests.\n\nCurrent development Core STC: {_metric(metrics, 'core_stc')}.\n",
+        "tamper-evident audit, and evaluator joins. Development and one-shot qualification values trace to their "
+        "machine-readable artifacts. The one-shot qualification status is "
+        f"{qualification.get('status', 'NOT_GENERATED')}; release decision: "
+        f"{'NO_PROMOTE' if qualification.get('status') == 'V22_DEVELOPMENT_NO_GO' else 'not reached'}.\n\n"
+        f"Development Core STC: {_metric(metrics, 'core_stc')}. Qualification Core STC: "
+        f"{_metric(qualification_metrics, 'core_stc')}.\n",
         encoding="utf-8",
     )
     evidence_paths = [
