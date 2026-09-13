@@ -7,6 +7,7 @@ from pathlib import Path
 from types import TracebackType
 
 import psutil
+from filelock import FileLock
 
 from controlflow.core.state import atomic_write_json, utc_now
 
@@ -32,30 +33,31 @@ class ExecutionLock(AbstractContextManager["ExecutionLock"]):
             return False
 
     def __enter__(self) -> ExecutionLock:
-        try:
+        # Serialize the entire inspect/recover/acquire sequence with an OS-level
+        # lock. Its kernel lock is released even after hard process termination.
+        with FileLock(str(self.path) + ".recovery", timeout=30):
+            if self.path.exists():
+                try:
+                    owner = json.loads(self.owner_path.read_text(encoding="utf-8"))
+                except (OSError, ValueError) as exc:
+                    raise RuntimeError("EXECUTION_LOCK_CORRUPT_FAIL_CLOSED") from exc
+                if self._owner_alive(owner):
+                    raise RuntimeError("EXECUTION_ALREADY_ACTIVE") from None
+                # The exact lock directory is repository-local and contains only
+                # its dead ownership record.
+                self.owner_path.unlink()
+                self.path.rmdir()
             self.path.mkdir()
-        except FileExistsError:
-            try:
-                owner = json.loads(self.owner_path.read_text(encoding="utf-8"))
-            except (OSError, ValueError) as exc:
-                raise RuntimeError("EXECUTION_LOCK_CORRUPT_FAIL_CLOSED") from exc
-            if self._owner_alive(owner):
-                raise RuntimeError("EXECUTION_ALREADY_ACTIVE") from None
-            # The exact lock directory is repository-local and contains only its
-            # ownership record. Remove it only after proving its owner is dead.
-            self.owner_path.unlink()
-            self.path.rmdir()
-            self.path.mkdir()
-        process = psutil.Process(os.getpid())
-        atomic_write_json(
-            self.owner_path,
-            {
-                "schema_version": 1,
-                "pid": os.getpid(),
-                "process_created_at": process.create_time(),
-                "acquired_at": utc_now(),
-            },
-        )
+            process = psutil.Process(os.getpid())
+            atomic_write_json(
+                self.owner_path,
+                {
+                    "schema_version": 1,
+                    "pid": os.getpid(),
+                    "process_created_at": process.create_time(),
+                    "acquired_at": utc_now(),
+                },
+            )
         self._owned = True
         return self
 

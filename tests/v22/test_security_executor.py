@@ -11,7 +11,7 @@ import pytest
 
 from controlflow.v22.approval import ApprovalIssuer, ApprovalVerifier
 from controlflow.v22.candidate import CandidateExecutionWorkflow, CandidateRunner
-from controlflow.v22.checkpoint import REQUIRED_FIELDS
+from controlflow.v22.checkpoint import REQUIRED_FIELDS, write_checkpoint
 from controlflow.v22.executor import InjectedCrash, TransactionalExecutor, ledger_security_metrics, verify_ledger
 from controlflow.v22.policy import ActionRegistry, AuthorizationState, PolicyDecisionPoint
 from controlflow.v22.retrieval import EvidenceRetriever
@@ -449,3 +449,25 @@ def test_actual_candidate_runner_recovers_after_durable_commit_before_partial_ou
             checkpoint_path=checkpoint,
             checkpoint_fields=checkpoint_fields,
         )
+
+    # Restore the checkpointed prefix, add an uncheckpointed crash-window suffix,
+    # and prove resume discards rather than adopts its candidate content.
+    record["severity"] = "LOW"
+    partial.write_text(json.dumps(record) + "\n", encoding="utf-8")
+    write_checkpoint(
+        checkpoint,
+        checkpoint_fields,
+        completed_case_ids=[record["case_id"]],
+        completed_records=[record],
+    )
+    suffix = {**record, "case_id": "UNTRUSTED-SUFFIX", "severity": "CRITICAL"}
+    partial.write_text(json.dumps(record) + "\n" + json.dumps(suffix) + "\n", encoding="utf-8")
+    recovered = workflow.run_dataset(
+        frame,
+        output_path=output,
+        partial_path=partial,
+        checkpoint_path=checkpoint,
+        checkpoint_fields=checkpoint_fields,
+    )
+    assert [item.case_id for item in recovered] == ["CASE-RUNNER"]
+    assert len(partial.read_text(encoding="utf-8").splitlines()) == 1

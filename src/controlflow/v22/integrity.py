@@ -148,10 +148,9 @@ def _serving_evidence(root: Path, report: dict[str, Any] | None) -> dict[str, An
         bundle = verify_bundle(bundle_path, root)
         manifest = json.loads((root / "state/v22_dataset_manifest.json").read_text(encoding="utf-8"))
         validation = manifest["splits"]["VALIDATION"]
-        namespace = Path(validation["runtime_path"]).parts[2]
-        checkpoint = json.loads(
-            (root / f"artifacts/v22/{namespace}/validation.checkpoint.json").read_text(encoding="utf-8")
-        )
+        execution = json.loads((root / "state/v22_execution_state.json").read_text(encoding="utf-8"))
+        ledger_path = root / execution["validation_ledger"]["path"]
+        checkpoint = json.loads(ledger_path.with_name("validation.checkpoint.json").read_text(encoding="utf-8"))
         git_commit, dirty_hash = git_state(root)
         provenance = report["provenance"]
         expected_provenance = {

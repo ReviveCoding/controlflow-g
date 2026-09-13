@@ -454,6 +454,28 @@ def contamination_against_prior(candidate_path: Path, prior_paths: list[Path]) -
     }
 
 
+def resolve_prior_runtime_paths(root: Path, manifest_path: Path, *, excluded_directory: Path) -> list[Path]:
+    """Resolve and completeness-check the frozen prior-runtime inventory."""
+    manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    selected = {
+        path.resolve()
+        for pattern in manifest["runtime_patterns"]
+        for path in root.glob(str(pattern))
+        if path.is_file() and excluded_directory.resolve() not in path.resolve().parents
+    }
+    recognized = set(manifest["recognized_runtime_filenames"])
+    discovered = {
+        path.resolve()
+        for path in (root / "data").rglob("*.parquet")
+        if path.name in recognized and excluded_directory.resolve() not in path.resolve().parents
+    }
+    missing = discovered - selected
+    if missing:
+        rendered = [path.relative_to(root).as_posix() for path in sorted(missing)]
+        raise RuntimeError(f"PRIOR_RUNTIME_MANIFEST_INCOMPLETE: {rendered}")
+    return sorted(selected)
+
+
 def numeric_features(frame: pd.DataFrame) -> pd.DataFrame:
     numeric = frame[
         [

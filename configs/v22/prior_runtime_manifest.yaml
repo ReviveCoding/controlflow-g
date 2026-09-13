@@ -1,0 +1,11 @@
+schema_version: 1
+purpose: qualification_and_final_contamination_comparison
+runtime_patterns:
+  - data/v2/development/cases.parquet
+  - data/v2/internal_eligibility*/runtime.parquet
+  - data/v21/**/runtime_cases.parquet
+  - data/v22/**/runtime_cases.parquet
+recognized_runtime_filenames:
+  - cases.parquet
+  - runtime.parquet
+  - runtime_cases.parquet

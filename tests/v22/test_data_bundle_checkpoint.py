@@ -10,7 +10,12 @@ from controlflow.core.state import sha256_file
 from controlflow.v22.bundle import verify_bundle, write_bundle
 from controlflow.v22.candidate import CandidateExecutionWorkflow, CandidateModelBundle
 from controlflow.v22.checkpoint import REQUIRED_FIELDS
-from controlflow.v22.dgp import RUNTIME_FORBIDDEN, contamination_report, generate_split
+from controlflow.v22.dgp import (
+    RUNTIME_FORBIDDEN,
+    contamination_report,
+    generate_split,
+    resolve_prior_runtime_paths,
+)
 from controlflow.v22.schemas import CandidateResult, PolicyDecision, Severity
 
 
@@ -32,6 +37,27 @@ def test_latent_truth_is_physically_absent_from_runtime_and_splits_are_independe
         assert "expected_evidence_ids" not in runtime
     report = contamination_report(paths)
     assert report["leakage_findings"] == 0
+
+
+def test_prior_runtime_manifest_covers_historical_and_development_runtime_data() -> None:
+    paths = resolve_prior_runtime_paths(
+        Path(__file__).resolve().parents[2],
+        Path(__file__).resolve().parents[2] / "configs/v22/prior_runtime_manifest.yaml",
+        excluded_directory=Path(__file__).resolve().parents[2] / "data/v22/qualification/V22QUAL",
+    )
+    relative = {path.relative_to(Path(__file__).resolve().parents[2]).as_posix() for path in paths}
+    assert "data/v2/development/cases.parquet" in relative
+    assert "data/v2/internal_eligibility_r4/runtime.parquet" in relative
+    assert "data/v21/development/cases/runtime_cases.parquet" in relative
+    assert "data/v22/development_r20/validation/runtime_cases.parquet" in relative
+
+
+def test_qualification_defers_truth_bytes_until_candidate_output_closes() -> None:
+    source = (Path(__file__).resolve().parents[2] / "scripts/v22_qualify.py").read_text(encoding="utf-8")
+    candidate_close = source.index("runner.run_dataset(")
+    truth_hash = source.index('sha256_file(truth_path) != manifest["truth_sha256"]')
+    evaluator_open = source.index("metrics = evaluate(")
+    assert candidate_close < truth_hash < evaluator_open
 
 
 def test_evaluator_cardinality_fails_closed_on_missing_case_or_event() -> None:

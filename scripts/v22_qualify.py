@@ -11,7 +11,7 @@ from controlflow.core.state import atomic_write_json, sha256_file, utc_now
 from controlflow.v22.approval import ApprovalIssuer
 from controlflow.v22.candidate import CandidateExecutionWorkflow, CandidateModelBundle
 from controlflow.v22.checkpoint import git_state
-from controlflow.v22.dgp import contamination_against_prior, generate_split
+from controlflow.v22.dgp import contamination_against_prior, generate_split, resolve_prior_runtime_paths
 from controlflow.v22.evaluation import evaluate, evaluator_protocol_hash
 from controlflow.v22.gates import apply_gates
 from controlflow.v22.integrity import verify_integrity_report
@@ -80,11 +80,11 @@ def main() -> None:
     # Freeze the comparison set before the sealed qualification namespace is
     # created.  Only prior runtime-observable case files are admissible here;
     # evaluator truth is not opened until candidate output has closed.
-    prior_paths = [
-        path
-        for path in (ROOT / "data").rglob("runtime_cases.parquet")
-        if directory.resolve() not in path.resolve().parents
-    ]
+    prior_paths = resolve_prior_runtime_paths(
+        ROOT,
+        ROOT / "configs/v22/prior_runtime_manifest.yaml",
+        excluded_directory=directory,
+    )
     dataset_manifest_path = directory / "manifest.json"
     if prior_manifest.get("one_shot_opened"):
         if not dataset_manifest_path.is_file():
@@ -107,7 +107,6 @@ def main() -> None:
     evidence_path = directory / "evidence_corpus.parquet"
     for path, field in (
         (runtime_path, "runtime_sha256"),
-        (truth_path, "truth_sha256"),
         (evidence_path, "evidence_sha256"),
         (directory / "authorization_state.parquet", "authorization_sha256"),
     ):
@@ -205,6 +204,8 @@ def main() -> None:
         concurrency=2,
     )
     # Evaluator truth is opened only after candidate output has closed.
+    if sha256_file(truth_path) != manifest["truth_sha256"]:
+        raise RuntimeError("QUALIFICATION_INVALID: evaluator truth hash mismatch after candidate closure")
     metrics_path = ROOT / "results/v22/qualification_metrics.json"
     metrics = evaluate(
         output_path,

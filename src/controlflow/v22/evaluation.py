@@ -18,6 +18,7 @@ def evaluator_protocol_hash(root: Path) -> str:
         root / "src/controlflow/v22/evaluation.py",
         root / "src/controlflow/v22/dgp.py",
         root / "configs/v22/temporal_truth_fixtures.yaml",
+        root / "configs/v22/prior_runtime_manifest.yaml",
     )
     payload = "\n".join(f"{path.relative_to(root).as_posix()}:{sha256_file(path)}" for path in paths)
     return hashlib.sha256(payload.encode()).hexdigest()

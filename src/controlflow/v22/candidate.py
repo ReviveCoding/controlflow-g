@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -293,7 +295,7 @@ class CandidateExecutionWorkflow:
             if records_hash(records[: len(completed)]) != checkpoint["completed_records_sha256"]:
                 raise RuntimeError("CHECKPOINT_INCOMPATIBLE: completed partial records were modified")
             ledger_rows = {str(row["event_id"]): row for row in self.candidate.executor.rows("action_ledger")}
-            for record in records:
+            for record in records[: len(completed)]:
                 event = ledger_rows.get(str(record["execution_event_id"]))
                 if (
                     event is None
@@ -301,9 +303,25 @@ class CandidateExecutionWorkflow:
                     or str(event["candidate_bundle_hash"]) != self.candidate.bundle.bundle_hash
                 ):
                     raise RuntimeError("CHECKPOINT_INCOMPATIBLE: partial record lacks ledger binding")
-            # A crash can occur after the durable partial append but before its
-            # checkpoint update. Ledger idempotency makes adopting this suffix safe.
-            completed = partial_ids
+            # Never adopt uncheckpointed candidate content. A crash-window suffix
+            # is atomically discarded and rerun; executor idempotency reuses its
+            # authoritative committed or noncommitted event.
+            if len(records) > len(completed):
+                records = records[: len(completed)]
+                descriptor, temp_name = tempfile.mkstemp(
+                    prefix=f".{partial_path.name}.", suffix=".tmp", dir=partial_path.parent
+                )
+                try:
+                    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                        for record in records:
+                            stream.write(json.dumps(record, sort_keys=True) + "\n")
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                    os.replace(temp_name, partial_path)
+                finally:
+                    temp = Path(temp_name)
+                    if temp.exists():
+                        temp.unlink()
             write_checkpoint(
                 checkpoint_path,
                 checkpoint_fields,

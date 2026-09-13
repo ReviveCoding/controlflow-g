@@ -3,23 +3,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pandas as pd
-
 from controlflow.core.state import atomic_write_json, utc_now
-from controlflow.v22.dgp import contamination_against_prior, generate_split
+from controlflow.v22.dgp import contamination_against_prior, generate_split, resolve_prior_runtime_paths
 
 ROOT = Path(__file__).resolve().parents[1]
-
-
-def _prior_runtime_paths(excluded: Path) -> list[Path]:
-    paths = []
-    for path in (ROOT / "data").rglob("*.parquet"):
-        if path.resolve() == excluded.resolve():
-            continue
-        columns = set(pd.read_parquet(path).columns)
-        if {"case_id", "narrative"} <= columns:
-            paths.append(path)
-    return paths
 
 
 def main() -> None:
@@ -35,9 +22,14 @@ def main() -> None:
     directory = ROOT / "data/v22/final/V22FINAL"
     if directory.exists():
         raise RuntimeError("V22 final namespace already exists and is immutable")
+    prior_paths = resolve_prior_runtime_paths(
+        ROOT,
+        ROOT / "configs/v22/prior_runtime_manifest.yaml",
+        excluded_directory=directory,
+    )
     manifest = generate_split(directory, role="FINAL", count=500, seed=23901, prefix="V22FINAL")
     runtime_path = directory / "runtime_cases.parquet"
-    contamination = contamination_against_prior(runtime_path, _prior_runtime_paths(runtime_path))
+    contamination = contamination_against_prior(runtime_path, prior_paths)
     atomic_write_json(ROOT / "results/v22/final_contamination.json", contamination)
     status = "GENERATED_SEALED_NOT_RUN" if contamination["leakage_findings"] == 0 else "INVALID_CONTAMINATED"
     atomic_write_json(
