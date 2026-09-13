@@ -1,5 +1,5 @@
 schema_version: 1
-frozen_before_qualification: false
+frozen_before_qualification: true
 gates:
   binary_critical_recall: {operator: gte, value: 0.95}
   typed_critical_recall: {operator: gte, value: 0.92}
@@ -18,4 +18,3 @@ gates:
   ledger_tamper_verification_failures: {operator: eq, value: 0}
   unresolved_blocker: {operator: eq, value: 0}
   unresolved_high: {operator: eq, value: 0}
-
