@@ -1,0 +1,56 @@
+schema_version: 1
+policies:
+  - policy_id: policy-2021
+    text: Historical control policy for 2021-2022.
+    business_valid_from: 2021-01-01T00:00:00Z
+    business_valid_to: 2023-01-01T00:00:00Z
+    system_known_from: 2020-12-01T00:00:00Z
+    correction_rank: 0
+  - policy_id: policy-2023
+    text: Base 2023 control policy.
+    business_valid_from: 2023-01-01T00:00:00Z
+    business_valid_to: 2024-01-01T00:00:00Z
+    system_known_from: 2022-12-15T00:00:00Z
+    correction_rank: 0
+  - policy_id: policy-2023-correction
+    text: Late correction for 2023, visible only after system ingestion.
+    business_valid_from: 2023-01-01T00:00:00Z
+    business_valid_to: 2024-01-01T00:00:00Z
+    system_known_from: 2025-03-01T00:00:00Z
+    correction_rank: 1
+  - policy_id: policy-2024
+    text: Historical control policy for 2024-2025.
+    business_valid_from: 2024-01-01T00:00:00Z
+    business_valid_to: 2026-01-01T00:00:00Z
+    system_known_from: 2024-01-03T00:00:00Z
+    correction_rank: 0
+  - policy_id: policy-2026
+    text: Current 2026 control policy.
+    business_valid_from: 2026-01-01T00:00:00Z
+    business_valid_to: null
+    system_known_from: 2025-12-01T00:00:00Z
+    correction_rank: 0
+  - policy_id: future-policy-2027
+    text: Future distractor that must not be selected early.
+    business_valid_from: 2027-01-01T00:00:00Z
+    business_valid_to: null
+    system_known_from: 2026-07-01T00:00:00Z
+    correction_rank: 0
+  - policy_id: irrelevant-policy
+    text: Irrelevant policy distractor.
+    business_valid_from: 2010-01-01T00:00:00Z
+    business_valid_to: 2011-01-01T00:00:00Z
+    system_known_from: 2010-01-01T00:00:00Z
+    correction_rank: 0
+  - policy_id: invalid-overlap-a
+    text: Deliberately invalid overlapping fixture A; candidate must fail closed.
+    business_valid_from: 2022-06-01T00:00:00Z
+    business_valid_to: 2022-06-15T00:00:00Z
+    system_known_from: 2022-05-01T00:00:00Z
+    correction_rank: 5
+  - policy_id: invalid-overlap-b
+    text: Deliberately invalid overlapping fixture B; candidate must fail closed.
+    business_valid_from: 2022-06-01T00:00:00Z
+    business_valid_to: 2022-06-15T00:00:00Z
+    system_known_from: 2022-05-01T00:00:00Z
+    correction_rank: 5

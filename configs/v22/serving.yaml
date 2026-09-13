@@ -1,0 +1,10 @@
+schema_version: 1
+model: Qwen/Qwen3-4B-Instruct-2507
+revision: cdbee75f17c01a7cc42f958dc650907174af0554
+dtype: bfloat16
+structured_output_backend: xgrammar
+host: 127.0.0.1
+port: 8022
+max_model_len: 4096
+gpu_memory_utilization: 0.72
+concurrency: 2

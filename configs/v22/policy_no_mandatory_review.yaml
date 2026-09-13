@@ -1,0 +1,7 @@
+schema_version: 1
+version: v22-policy-ablation-no-mandatory-review
+novelty_review_threshold: 999.0
+uncertainty_review_threshold: 2.0
+critical_requires_review: false
+high_requires_review: false
+conflict_requires_review: false

@@ -1,0 +1,39 @@
+schema_version: 1
+version: v22-actions-1
+actions:
+  CLOSE_NO_ACTION:
+    risk_tier: 0
+    mode: write
+    allowed_roles: [investigator, senior_investigator]
+    allowed_purposes: [control_exception_investigation]
+    allowed_scopes: [consumer, cards, operations]
+    requires_review: false
+    reversible: true
+    state_transition: CLOSED_NO_ACTION
+  REQUEST_EVIDENCE:
+    risk_tier: 0
+    mode: write
+    allowed_roles: [investigator, senior_investigator]
+    allowed_purposes: [control_exception_investigation]
+    allowed_scopes: [consumer, cards, operations]
+    requires_review: false
+    reversible: true
+    state_transition: EVIDENCE_REQUESTED
+  OPEN_REMEDIATION:
+    risk_tier: 1
+    mode: write
+    allowed_roles: [investigator, senior_investigator]
+    allowed_purposes: [control_exception_investigation]
+    allowed_scopes: [consumer, cards, operations]
+    requires_review: true
+    reversible: true
+    state_transition: REMEDIATION_OPEN
+  ESCALATE_CRITICAL:
+    risk_tier: 2
+    mode: write
+    allowed_roles: [investigator, senior_investigator]
+    allowed_purposes: [control_exception_investigation]
+    allowed_scopes: [consumer, cards, operations]
+    requires_review: true
+    reversible: false
+    state_transition: CRITICAL_ESCALATED

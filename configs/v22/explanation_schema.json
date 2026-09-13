@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["case_id", "summary", "claims", "evidence_ids", "policy_id"],
+  "properties": {
+    "case_id": {"type": "string"},
+    "summary": {"type": "string"},
+    "claims": {"type": "array", "items": {"type": "string"}},
+    "evidence_ids": {"type": "array", "items": {"type": "string"}},
+    "policy_id": {"type": ["string", "null"]}
+  }
+}

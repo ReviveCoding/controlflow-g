@@ -1,0 +1,13 @@
+schema_version: 1
+authority: evaluator_only_declarative_truth
+fixtures:
+  - {scenario: standard_2021, event_time: '2021-06-01T00:00:00Z', system_time: '2021-07-01T00:00:00Z', expected_policy_id: policy-2021}
+  - {scenario: future_distractor, event_time: '2022-08-01T00:00:00Z', system_time: '2026-09-01T00:00:00Z', expected_policy_id: policy-2021}
+  - {scenario: pre_ingestion_2023, event_time: '2023-02-01T00:00:00Z', system_time: '2022-12-01T00:00:00Z', expected_policy_id: null}
+  - {scenario: out_of_order_ingestion, event_time: '2023-07-01T00:00:00Z', system_time: '2024-08-01T00:00:00Z', expected_policy_id: policy-2023}
+  - {scenario: late_correction, event_time: '2023-09-01T00:00:00Z', system_time: '2025-04-01T00:00:00Z', expected_policy_id: policy-2023-correction}
+  - {scenario: standard_2024, event_time: '2024-04-01T00:00:00Z', system_time: '2024-05-01T00:00:00Z', expected_policy_id: policy-2024}
+  - {scenario: current_version_bias, event_time: '2025-05-01T00:00:00Z', system_time: '2026-09-01T00:00:00Z', expected_policy_id: policy-2024}
+  - {scenario: stale_cache, event_time: '2026-03-01T00:00:00Z', system_time: '2026-04-01T00:00:00Z', expected_policy_id: policy-2026}
+  - {scenario: standard_2026, event_time: '2026-08-01T00:00:00Z', system_time: '2026-09-01T00:00:00Z', expected_policy_id: policy-2026}
+  - {scenario: invalid_overlap, event_time: '2022-06-05T00:00:00Z', system_time: '2026-09-01T00:00:00Z', expected_policy_id: null}

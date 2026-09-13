@@ -34,3 +34,4 @@ state/audit_trust/
 reports/figures/*.png
 data/v21/
 data/v22/
+artifacts/v22/local_keys/

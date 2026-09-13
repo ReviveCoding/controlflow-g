@@ -1,0 +1,7 @@
+schema_version: 1
+version: v22-policy-1
+novelty_review_threshold: 1.0
+uncertainty_review_threshold: 0.45
+critical_requires_review: true
+high_requires_review: true
+conflict_requires_review: true

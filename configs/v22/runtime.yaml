@@ -1,0 +1,24 @@
+schema_version: 1
+workflow_version: v22-workflow-1
+development:
+  namespace: development_r7
+  train_count: 1200
+  calibration_count: 400
+  validation_count: 400
+  seeds:
+    train: 22051
+    calibration: 22052
+    validation: 22053
+retrieval:
+  top_k: 2
+  lexical_weight: 1.0
+  control_metadata_weight: 0.5
+  case_metadata_weight: 0.0
+  minimum_score: 3.0
+  require_business_unit: true
+  enforce_authorization: true
+temporal:
+  use_business_time: true
+  use_system_time: true
+novelty:
+  calibration_quantile: 0.95

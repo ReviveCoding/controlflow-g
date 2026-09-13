@@ -347,6 +347,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "accelerate" },
+    { name = "cryptography" },
     { name = "delta-spark" },
     { name = "fastapi" },
     { name = "filelock" },
@@ -392,6 +393,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "accelerate", specifier = ">=1.5,<2" },
+    { name = "cryptography", specifier = ">=45,<51" },
     { name = "delta-spark", specifier = "==3.3.2" },
     { name = "fastapi", specifier = ">=0.115,<1" },
     { name = "filelock", specifier = ">=3.16,<4" },
