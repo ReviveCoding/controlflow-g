@@ -1,0 +1,1 @@
+{"schema_version":1,"bundle_id":"V21-CANDIDATE-001","status":"INVALID_PROVISIONAL_NOT_EXECUTED","qualification_use_permitted":false,"reasons":["critical threshold provenance was not calibration-only","candidate runtime did not load or verify the bundle","split provenance contains placeholders rather than exact hashes","structured-output backend smoke did not complete"]}

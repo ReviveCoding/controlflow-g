@@ -1,0 +1,11 @@
+schema_version: 1
+vllm_version: 0.29.0
+structured_output_backend: xgrammar
+structured_outputs_interface: true
+deprecated_guided_fields_allowed: false
+model_id: Qwen/Qwen3-4B-Instruct-2507
+model_revision: cdbee75f17c01a7cc42f958dc650907174af0554
+served_model_name: controlflow-g-v21-qwen3-4b
+concurrency: 2
+silent_cpu_fallback_allowed: false
+gpu_semaphore: state/v21_gpu.lock.d

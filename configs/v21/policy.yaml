@@ -1,0 +1,7 @@
+schema_version: 1
+policy_version: v21-policy-1
+workflow_version: v21-workflow-1
+action_policy_version: v21-action-policy-1
+precedence: [DENY, INSUFFICIENT_EVIDENCE, REQUIRE_REVIEW, ALLOW]
+uncertainty_threshold: 0.5
+novelty_threshold: 0.5

@@ -1,0 +1,6 @@
+schema_version: 1
+versions:
+  - {id: policy-v1, business_valid_from: '2020-01-01', business_valid_to: '2024-01-01'}
+  - {id: policy-v2, business_valid_from: '2024-01-01', business_valid_to: '2026-01-01'}
+  - {id: policy-v3, business_valid_from: '2026-01-01', business_valid_to: null}
+system_known_time_independent: true

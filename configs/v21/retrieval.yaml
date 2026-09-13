@@ -1,0 +1,4 @@
+schema_version: 1
+point_in_time_filter: true
+include_distractors: [older_stale, future, current, irrelevant]
+authorization_filter: true

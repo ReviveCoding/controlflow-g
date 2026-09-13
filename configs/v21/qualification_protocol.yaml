@@ -1,0 +1,8 @@
+schema_version: 1
+role: one_time_internal_qualification
+namespace: V21QUAL-*
+rows: 600
+candidate_execution_input: runtime_cases.parquet
+evaluator_input: evaluator_truth.parquet
+partial_metrics_visible: false
+rerun_as_fresh_evidence: false
