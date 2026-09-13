@@ -152,6 +152,41 @@ def _probability(model: Any, frame: pd.DataFrame) -> np.ndarray:
     return np.asarray(model.predict_proba(frame)[:, 1])
 
 
+def _fit_calibrator(uncalibrated: np.ndarray, truth: pd.Series) -> tuple[str, Any, dict[str, float], np.ndarray]:
+    selection_mask = np.arange(len(truth)) % 3 == 0
+    fit_mask = ~selection_mask
+    platt_select = LogisticRegression(random_state=22002).fit(
+        uncalibrated[fit_mask].reshape(-1, 1), truth.iloc[np.flatnonzero(fit_mask)]
+    )
+    from sklearn.isotonic import IsotonicRegression
+
+    isotonic_select = IsotonicRegression(out_of_bounds="clip").fit(
+        uncalibrated[fit_mask], truth.iloc[np.flatnonzero(fit_mask)]
+    )
+    selection_candidates = {
+        "platt": platt_select.predict_proba(uncalibrated[selection_mask].reshape(-1, 1))[:, 1],
+        "isotonic": isotonic_select.predict(uncalibrated[selection_mask]),
+    }
+    scores = {
+        name: float(brier_score_loss(truth.iloc[np.flatnonzero(selection_mask)], values))
+        for name, values in selection_candidates.items()
+    }
+    method = min(scores, key=lambda name: scores[name])
+    platt = LogisticRegression(random_state=22002).fit(uncalibrated.reshape(-1, 1), truth)
+    isotonic = IsotonicRegression(out_of_bounds="clip").fit(uncalibrated, truth)
+    calibrator = platt if method == "platt" else isotonic
+    calibrated = (
+        platt.predict_proba(uncalibrated.reshape(-1, 1))[:, 1] if method == "platt" else isotonic.predict(uncalibrated)
+    )
+    return method, calibrator, scores, np.asarray(calibrated)
+
+
+def _apply_calibrator(method: str, calibrator: Any, probabilities: np.ndarray) -> np.ndarray:
+    if method == "platt":
+        return np.asarray(calibrator.predict_proba(probabilities.reshape(-1, 1))[:, 1])
+    return np.asarray(calibrator.predict(probabilities))
+
+
 def train_models(
     *,
     train_runtime: Path,
@@ -186,46 +221,53 @@ def train_models(
         candidates["xgboost_cuda"] = (xgb_model, xgb_probabilities)
         gpu_evidence.update({"xgboost_cuda_ran": True, "device": "cuda", "booster_config": json.loads(booster_config)})
     comparisons: dict[str, Any] = {}
-    for name, (_, probabilities) in candidates.items():
+    candidate_calibrations: dict[str, tuple[str, Any, dict[str, float], float, dict[str, float]]] = {}
+    validation_truth_array = validation_critical.to_numpy(dtype=bool)
+    for name, (model, raw_validation_probabilities) in candidates.items():
+        method, calibrator, scores, calibrated_on_calibration = _fit_calibrator(
+            _probability(model, calibration_x), calibration_critical
+        )
+        threshold, threshold_metrics = _critical_threshold(
+            calibration_critical.to_numpy(dtype=int), calibrated_on_calibration
+        )
+        calibrated_on_validation = _apply_calibrator(method, calibrator, raw_validation_probabilities)
+        validation_prediction = calibrated_on_validation >= threshold
+        validation_negatives = ~validation_truth_array
         comparisons[name] = {
-            "validation_brier": float(brier_score_loss(validation_critical, probabilities)),
-            "validation_recall_at_0_5": float(recall_score(validation_critical, probabilities >= 0.5, zero_division=0)),
+            "validation_brier": float(brier_score_loss(validation_critical, calibrated_on_validation)),
+            "validation_recall_at_calibrated_threshold": float(
+                recall_score(validation_critical, validation_prediction, zero_division=0)
+            ),
+            "validation_fpr_at_calibrated_threshold": float(
+                np.mean(validation_prediction[validation_negatives]) if validation_negatives.any() else 0.0
+            ),
+            "calibration_threshold": threshold,
+            "calibration_threshold_metrics": threshold_metrics,
         }
-    recall_eligible = [name for name, metrics in comparisons.items() if metrics["validation_recall_at_0_5"] >= 0.95]
-    selection_pool = recall_eligible or list(comparisons)
-    selected_name = min(selection_pool, key=lambda item: comparisons[item]["validation_brier"])
+        candidate_calibrations[name] = (method, calibrator, scores, threshold, threshold_metrics)
+    recall_eligible = [
+        name for name, metrics in comparisons.items() if metrics["validation_recall_at_calibrated_threshold"] >= 0.95
+    ]
+    if recall_eligible:
+        selected_name = min(
+            recall_eligible,
+            key=lambda item: (
+                comparisons[item]["validation_fpr_at_calibrated_threshold"],
+                comparisons[item]["validation_brier"],
+            ),
+        )
+    else:
+        selected_name = min(
+            comparisons,
+            key=lambda item: (
+                -comparisons[item]["validation_recall_at_calibrated_threshold"],
+                comparisons[item]["validation_fpr_at_calibrated_threshold"],
+            ),
+        )
     selected_model = candidates[selected_name][0]
-    uncalibrated = _probability(selected_model, calibration_x)
-    # Select calibration method on a deterministic internal CALIBRATION holdback,
-    # then refit that method on all CALIBRATION. No VALIDATION labels enter this step.
-    selection_mask = np.arange(len(calibration_critical)) % 3 == 0
-    fit_mask = ~selection_mask
-    platt_select = LogisticRegression(random_state=22002).fit(
-        uncalibrated[fit_mask].reshape(-1, 1), calibration_critical.iloc[np.flatnonzero(fit_mask)]
-    )
-    from sklearn.isotonic import IsotonicRegression
-
-    isotonic_select = IsotonicRegression(out_of_bounds="clip").fit(
-        uncalibrated[fit_mask], calibration_critical.iloc[np.flatnonzero(fit_mask)]
-    )
-    selection_candidates = {
-        "platt": platt_select.predict_proba(uncalibrated[selection_mask].reshape(-1, 1))[:, 1],
-        "isotonic": isotonic_select.predict(uncalibrated[selection_mask]),
-    }
-    calibration_scores = {
-        name: float(brier_score_loss(calibration_critical.iloc[np.flatnonzero(selection_mask)], values))
-        for name, values in selection_candidates.items()
-    }
-    calibrator_name = min(calibration_scores, key=lambda name: calibration_scores[name])
-    platt = LogisticRegression(random_state=22002).fit(uncalibrated.reshape(-1, 1), calibration_critical)
-    isotonic = IsotonicRegression(out_of_bounds="clip").fit(uncalibrated, calibration_critical)
-    calibrator = platt if calibrator_name == "platt" else isotonic
-    calibrated_full = (
-        platt.predict_proba(uncalibrated.reshape(-1, 1))[:, 1]
-        if calibrator_name == "platt"
-        else isotonic.predict(uncalibrated)
-    )
-    threshold, threshold_metrics = _critical_threshold(calibration_critical.to_numpy(dtype=int), calibrated_full)
+    calibrator_name, calibrator, calibration_scores, threshold, threshold_metrics = candidate_calibrations[
+        selected_name
+    ]
     critical_artifact = output_dir / "critical_model.joblib"
     calibrator_artifact = output_dir / "critical_calibrator.joblib"
     joblib.dump(selected_model, critical_artifact)
@@ -301,8 +343,8 @@ def train_models(
         "critical_candidates": comparisons,
         "selected_critical_model": selected_name,
         "critical_model_selection_rule": (
-            "VALIDATION recall at 0.5 >= 0.95, then minimum VALIDATION Brier; "
-            "if no candidate is eligible, minimum VALIDATION Brier"
+            "evaluate each deployable CALIBRATION-calibrated/thresholded pipeline on VALIDATION; retain recall "
+            ">= 0.95 then minimize FPR and Brier, otherwise maximize recall then minimize FPR"
         ),
         "noncritical_candidates": noncritical_comparisons,
         "selected_noncritical_model": selected_noncritical_name,
