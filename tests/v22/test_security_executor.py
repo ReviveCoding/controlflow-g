@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import json
 import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -119,6 +120,16 @@ def test_review_approval_cannot_be_bypassed_tampered_or_reused(tmp_path: Path, m
         "approval_already_consumed",
         "logical_action_already_committed",
     }
+
+
+def test_noncommitted_retry_reuses_the_authoritative_event(tmp_path: Path) -> None:
+    executor, _, _, action, policy_input = setup_executor(tmp_path)
+    executor.prepare(action, policy_input)
+    first = executor.commit(action, policy_input, approval=None, idempotency_key="deny-once")
+    second = executor.commit(action, policy_input, approval=None, idempotency_key="deny-once")
+    assert first["committed"] == 0
+    assert second["event_id"] == first["event_id"]
+    assert len(executor.rows("action_ledger")) == 1
 
 
 def test_authorization_is_revalidated_immediately_before_commit(tmp_path: Path) -> None:
@@ -427,3 +438,14 @@ def test_actual_candidate_runner_recovers_after_durable_commit_before_partial_ou
     )
     assert len(results) == 1
     assert len(executor.rows("action_ledger")) == 1
+    record = json.loads(partial.read_text(encoding="utf-8"))
+    record["severity"] = "HIGH"
+    partial.write_text(json.dumps(record) + "\n", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="completed partial records were modified"):
+        workflow.run_dataset(
+            frame,
+            output_path=output,
+            partial_path=partial,
+            checkpoint_path=checkpoint,
+            checkpoint_fields=checkpoint_fields,
+        )

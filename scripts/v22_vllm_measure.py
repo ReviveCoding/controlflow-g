@@ -3,20 +3,20 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import json
-import subprocess
 from pathlib import Path
 from typing import Any
 
-import httpx
 import pandas as pd
 import yaml
 
 from controlflow.core.state import atomic_write_json, sha256_file, utc_now
 from controlflow.v22.approval import ApprovalIssuer
 from controlflow.v22.candidate import CandidateExecutionWorkflow, CandidateModelBundle
+from controlflow.v22.checkpoint import git_state
 from controlflow.v22.evaluation import bootstrap_quantile_ci
 from controlflow.v22.runtime import build_candidate_runtime
 from controlflow.v22.schemas import PolicyDecision
+from controlflow.v22.serving import verify_live_bundle_server
 from controlflow.v22.vllm_client import StructuredVllmClient
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -29,7 +29,6 @@ def main() -> None:
     parser.add_argument("--no-semantic-verifier", action="store_true")
     args = parser.parse_args()
     config = yaml.safe_load((ROOT / "configs/v22/runtime.yaml").read_text(encoding="utf-8"))
-    serving = yaml.safe_load((ROOT / "configs/v22/serving.yaml").read_text(encoding="utf-8"))
     namespace = config["development"]["namespace"]
     runtime_path = ROOT / f"data/v22/{namespace}/validation/runtime_cases.parquet"
     evidence_path = ROOT / f"data/v22/{namespace}/validation/evidence_corpus.parquet"
@@ -41,39 +40,14 @@ def main() -> None:
     if ledger.exists():
         raise RuntimeError(f"serving evidence namespace already exists: {ledger}")
     bundle = CandidateModelBundle(ROOT / "state/v22_model_bundle.json", ROOT)
-    endpoint_root = f"http://{serving['host']}:{serving['port']}"
-    health = httpx.get(f"{endpoint_root}/v1/models", timeout=10)
-    health.raise_for_status()
-    served_models = {str(item["id"]) for item in health.json()["data"]}
-    live_model_identity_verified = "controlflow-g-v22-qwen3-4b" in served_models
-    process_probe = subprocess.run(
-        [
-            "wsl.exe",
-            "-d",
-            "Ubuntu-22.04",
-            "--",
-            "bash",
-            "-lc",
-            "pgrep -af 'vllm serve Qwen/Qwen3-4B-Instruct-2507'",
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
-    required_arguments = (
-        str(serving["revision"]),
-        "--dtype bfloat16",
-        f"--gpu-memory-utilization {serving['gpu_memory_utilization']}",
-        f"--max-model-len {serving['max_model_len']}",
-        "--max-num-seqs 2",
-        "--structured-outputs-config.backend xgrammar",
-    )
-    live_command_line_verified = all(item in process_probe for item in required_arguments)
-    if not live_model_identity_verified or not live_command_line_verified:
-        raise RuntimeError("LIVE_VLLM_IDENTITY_OR_ARGUMENT_MISMATCH")
+    live = verify_live_bundle_server(ROOT, bundle)
+    serving = live["config"]
+    endpoint_root = str(live["endpoint_root"])
+    live_model_identity_verified = bool(live["verified"])
+    live_command_line_verified = bool(live["verified"])
     client = StructuredVllmClient(
         endpoint=f"{endpoint_root}/v1/chat/completions",
-        model="controlflow-g-v22-qwen3-4b",
+        model=str(bundle.payload["qwen_served_model"]),
         schema=json.loads(bundle.artifact_path("schema").read_text(encoding="utf-8")),
         prompt_template=bundle.artifact_path("prompt").read_text(encoding="utf-8"),
         constrained=not args.unconstrained,
@@ -119,17 +93,12 @@ def main() -> None:
         "actual_live_vllm": True,
         "live_model_identity_verified": live_model_identity_verified,
         "live_command_line_verified": live_command_line_verified,
-        "live_served_models": sorted(served_models),
-        "live_process_command": process_probe,
-        "model": serving["model"],
-        "model_revision": serving["revision"],
-        "vllm_version": json.loads(
-            next(
-                line
-                for line in (ROOT / "state/v22_environment_evidence/wsl_probe.txt").read_text().splitlines()
-                if '"vllm"' in line
-            )
-        )["vllm"],
+        "live_served_models": live["served_models"],
+        "live_process_command": live["process_command"],
+        "model": bundle.payload["qwen_model"],
+        "served_model": bundle.payload["qwen_served_model"],
+        "model_revision": bundle.payload["qwen_revision"],
+        "vllm_version": bundle.payload["vllm_version"],
         "structured_backend": None if args.unconstrained else serving["structured_output_backend"],
         "server_args": {
             "dtype": serving["dtype"],
@@ -152,6 +121,21 @@ def main() -> None:
             "total": bootstrap_quantile_ci(frame.total_latency_seconds),
         },
         "response_artifact": {"path": output.relative_to(ROOT).as_posix(), "sha256": sha256_file(output)},
+        "provenance": {
+            "candidate_bundle_hash": bundle.bundle_hash,
+            "candidate_bundle_manifest_sha256": sha256_file(ROOT / "state/v22_model_bundle.json"),
+            "runtime_dataset_sha256": sha256_file(runtime_path),
+            "evidence_corpus_sha256": sha256_file(evidence_path),
+            "authorization_state_sha256": sha256_file(
+                ROOT / f"data/v22/{namespace}/validation/authorization_state.parquet"
+            ),
+            "git_commit": git_state(ROOT)[0],
+            "dirty_state_hash": git_state(ROOT)[1],
+            "checkpoint_fingerprint": json.loads(
+                (ROOT / f"artifacts/v22/{namespace}/validation.checkpoint.json").read_text(encoding="utf-8")
+            )["fingerprint"],
+            "request_case_ids": frame.case_id.astype(str).tolist(),
+        },
         "diagnostics": diagnostics,
     }
     atomic_write_json(ROOT / f"state/v22_vllm_{slug}_c2.json", report)

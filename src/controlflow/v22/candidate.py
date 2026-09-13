@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 
 from controlflow.v22.bundle import verify_bundle
-from controlflow.v22.checkpoint import validate_checkpoint, write_checkpoint
+from controlflow.v22.checkpoint import records_hash, validate_checkpoint, write_checkpoint
 from controlflow.v22.executor import TransactionalExecutor
 from controlflow.v22.models import calibrated_probability
 from controlflow.v22.retrieval import EvidenceRetriever
@@ -277,7 +277,8 @@ class CandidateExecutionWorkflow:
         completed: list[str] = []
         records: list[dict[str, Any]] = []
         if checkpoint_path.exists():
-            completed = validate_checkpoint(checkpoint_path, checkpoint_fields)
+            checkpoint = validate_checkpoint(checkpoint_path, checkpoint_fields)
+            completed = list(checkpoint.get("completed_case_ids", []))
             if not partial_path.exists():
                 if completed:
                     raise RuntimeError("CHECKPOINT_INCOMPATIBLE: partial output missing")
@@ -287,22 +288,28 @@ class CandidateExecutionWorkflow:
             partial_ids = [str(item["case_id"]) for item in records]
             if partial_ids[: len(completed)] != completed or len(partial_ids) != len(set(partial_ids)):
                 raise RuntimeError("CHECKPOINT_INCOMPATIBLE: partial output does not match checkpoint")
-            if len(partial_ids) > len(completed):
-                ledger_rows = {str(row["event_id"]): row for row in self.candidate.executor.rows("action_ledger")}
-                for record in records[len(completed) :]:
-                    event = ledger_rows.get(str(record["execution_event_id"]))
-                    if (
-                        event is None
-                        or str(event["case_id"]) != str(record["case_id"])
-                        or str(event["candidate_bundle_hash"]) != self.candidate.bundle.bundle_hash
-                    ):
-                        raise RuntimeError("CHECKPOINT_INCOMPATIBLE: partial suffix lacks ledger binding")
+            if records_hash(records[: len(completed)]) != checkpoint["completed_records_sha256"]:
+                raise RuntimeError("CHECKPOINT_INCOMPATIBLE: completed partial records were modified")
+            ledger_rows = {str(row["event_id"]): row for row in self.candidate.executor.rows("action_ledger")}
+            for record in records:
+                event = ledger_rows.get(str(record["execution_event_id"]))
+                if (
+                    event is None
+                    or str(event["case_id"]) != str(record["case_id"])
+                    or str(event["candidate_bundle_hash"]) != self.candidate.bundle.bundle_hash
+                ):
+                    raise RuntimeError("CHECKPOINT_INCOMPATIBLE: partial record lacks ledger binding")
             # A crash can occur after the durable partial append but before its
             # checkpoint update. Ledger idempotency makes adopting this suffix safe.
             completed = partial_ids
-            write_checkpoint(checkpoint_path, checkpoint_fields, completed_case_ids=completed)
+            write_checkpoint(
+                checkpoint_path,
+                checkpoint_fields,
+                completed_case_ids=completed,
+                completed_records=records,
+            )
         else:
-            write_checkpoint(checkpoint_path, checkpoint_fields, completed_case_ids=[])
+            write_checkpoint(checkpoint_path, checkpoint_fields, completed_case_ids=[], completed_records=[])
         completed_set = set(completed)
         pending = [row for row in frame.to_dict(orient="records") if str(row["case_id"]) not in completed_set]
         if concurrency < 1:
@@ -320,7 +327,17 @@ class CandidateExecutionWorkflow:
                     stream.write(json.dumps(serialized, sort_keys=True) + "\n")
                     records.append(serialized)
                     completed.append(result.case_id)
-            write_checkpoint(checkpoint_path, checkpoint_fields, completed_case_ids=completed)
-        write_checkpoint(checkpoint_path, checkpoint_fields, completed_case_ids=completed)
+            write_checkpoint(
+                checkpoint_path,
+                checkpoint_fields,
+                completed_case_ids=completed,
+                completed_records=records,
+            )
+        write_checkpoint(
+            checkpoint_path,
+            checkpoint_fields,
+            completed_case_ids=completed,
+            completed_records=records,
+        )
         pd.DataFrame(records).to_parquet(output_path, index=False)
         return [CandidateResult.model_validate(item) for item in records]

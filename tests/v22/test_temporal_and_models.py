@@ -5,6 +5,7 @@ from pathlib import Path
 
 import yaml
 
+from controlflow.v22.dgp import _era
 from controlflow.v22.temporal import CandidateTemporalRetriever, load_policy_corpus
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -29,3 +30,20 @@ def test_candidate_matches_independently_authored_temporal_truth_fixtures() -> N
         event_time = datetime.fromisoformat(str(fixture["event_time"]).replace("Z", "+00:00"))
         system_time = datetime.fromisoformat(str(fixture["system_time"]).replace("Z", "+00:00"))
         assert retriever.select(event_time, system_time) == fixture.get("expected_policy_id")
+
+
+def test_split_roles_use_disjoint_temporal_combinations() -> None:
+    roles = ("TRAIN", "CALIBRATION", "VALIDATION", "QUALIFICATION", "FINAL")
+    combinations = {
+        role: {(_era(index, role=role, seed=100 + offset)[:2]) for index in range(10)}
+        for offset, role in enumerate(roles)
+    }
+    for offset, left in enumerate(roles):
+        for right in roles[offset + 1 :]:
+            assert combinations[left].isdisjoint(combinations[right])
+
+    retriever = CandidateTemporalRetriever(load_policy_corpus(ROOT / "configs/v22/temporal_policies.yaml"))
+    for offset, role in enumerate(roles):
+        for index in range(10):
+            event_time, system_time, expected, _ = _era(index, role=role, seed=100 + offset)
+            assert retriever.select(event_time, system_time) == expected

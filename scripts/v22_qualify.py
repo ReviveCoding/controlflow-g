@@ -15,8 +15,10 @@ from controlflow.v22.dgp import contamination_against_prior, generate_split
 from controlflow.v22.evaluation import evaluate, evaluator_protocol_hash
 from controlflow.v22.gates import apply_gates
 from controlflow.v22.integrity import verify_integrity_report
+from controlflow.v22.run_lock import ExecutionLock
 from controlflow.v22.runtime import build_candidate_runtime
 from controlflow.v22.schemas import PolicyDecision
+from controlflow.v22.serving import verify_live_bundle_server
 from controlflow.v22.vllm_client import StructuredVllmClient
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -75,6 +77,14 @@ def main() -> None:
     if not serving.get("actual_live_vllm") or serving.get("concurrency") != 2:
         raise RuntimeError("QUALIFICATION_PROHIBITED: live concurrency-2 serving evidence missing")
     directory = ROOT / "data/v22/qualification/V22QUAL"
+    # Freeze the comparison set before the sealed qualification namespace is
+    # created.  Only prior runtime-observable case files are admissible here;
+    # evaluator truth is not opened until candidate output has closed.
+    prior_paths = [
+        path
+        for path in (ROOT / "data").rglob("runtime_cases.parquet")
+        if directory.resolve() not in path.resolve().parents
+    ]
     dataset_manifest_path = directory / "manifest.json"
     if prior_manifest.get("one_shot_opened"):
         if not dataset_manifest_path.is_file():
@@ -103,13 +113,6 @@ def main() -> None:
     ):
         if sha256_file(path) != manifest[field]:
             raise RuntimeError("QUALIFICATION_INVALID: generated dataset hash mismatch")
-    prior_paths = []
-    for path in (ROOT / "data").rglob("*.parquet"):
-        if path.resolve() == runtime_path.resolve():
-            continue
-        columns = set(pd.read_parquet(path, columns=None).columns)
-        if {"case_id", "narrative"} <= columns:
-            prior_paths.append(path)
     contamination = contamination_against_prior(runtime_path, prior_paths)
     contamination_path = ROOT / "results/v22/qualification_contamination.json"
     atomic_write_json(contamination_path, contamination)
@@ -126,14 +129,15 @@ def main() -> None:
         )
         raise RuntimeError("QUALIFICATION_PROHIBITED: contamination detected")
     runtime = pd.read_parquet(runtime_path)
-    serving_config = yaml.safe_load((ROOT / "configs/v22/serving.yaml").read_text(encoding="utf-8"))
     bundle = CandidateModelBundle(ROOT / "state/v22_model_bundle.json", ROOT)
+    live = verify_live_bundle_server(ROOT, bundle)
+    serving_config = live["config"]
     public_key = ROOT / "artifacts/v22/approval_public_key.pem"
     issuer = ApprovalIssuer.create_ephemeral(ROOT / "artifacts/v22/local_keys", public_key)
     ledger = ROOT / "artifacts/v22/qualification.sqlite"
     explanation = StructuredVllmClient(
         endpoint=f"http://{serving_config['host']}:{serving_config['port']}/v1/chat/completions",
-        model="controlflow-g-v22-qwen3-4b",
+        model=str(bundle.payload["qwen_served_model"]),
         schema=json.loads(bundle.artifact_path("schema").read_text(encoding="utf-8")),
         prompt_template=bundle.artifact_path("prompt").read_text(encoding="utf-8"),
     )
@@ -239,12 +243,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    lock = ROOT / "state/v22_qualification_execution.lock"
-    try:
-        lock.mkdir()
-    except FileExistsError as exc:
-        raise RuntimeError("QUALIFICATION_EXECUTION_ALREADY_ACTIVE") from exc
-    try:
+    with ExecutionLock(ROOT / "state/v22_qualification_execution.lock"):
         main()
-    finally:
-        lock.rmdir()

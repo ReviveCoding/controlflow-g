@@ -4,7 +4,6 @@ import hashlib
 import json
 from pathlib import Path
 
-import httpx
 import pandas as pd
 import yaml
 
@@ -14,8 +13,10 @@ from controlflow.v22.candidate import CandidateExecutionWorkflow, CandidateModel
 from controlflow.v22.checkpoint import git_state
 from controlflow.v22.evaluation import evaluate, evaluator_protocol_hash
 from controlflow.v22.gates import apply_gates
+from controlflow.v22.run_lock import ExecutionLock
 from controlflow.v22.runtime import build_candidate_runtime
 from controlflow.v22.schemas import PolicyDecision
+from controlflow.v22.serving import verify_live_bundle_server
 from controlflow.v22.vllm_client import StructuredVllmClient
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -64,13 +65,12 @@ def main() -> None:
     ):
         if sha256_file(paths[key]) != freeze["bindings"][binding]:
             raise RuntimeError(f"FINAL_FREEZE_MISMATCH: {key}")
-    serving = yaml.safe_load((ROOT / "configs/v22/serving.yaml").read_text(encoding="utf-8"))
-    endpoint_root = f"http://{serving['host']}:{serving['port']}"
-    httpx.get(f"{endpoint_root}/v1/models", timeout=10).raise_for_status()
     bundle = CandidateModelBundle(ROOT / "state/v22_model_bundle.json", ROOT)
+    live = verify_live_bundle_server(ROOT, bundle)
+    endpoint_root = str(live["endpoint_root"])
     client = StructuredVllmClient(
         endpoint=f"{endpoint_root}/v1/chat/completions",
-        model="controlflow-g-v22-qwen3-4b",
+        model=str(bundle.payload["qwen_served_model"]),
         schema=json.loads(bundle.artifact_path("schema").read_text(encoding="utf-8")),
         prompt_template=bundle.artifact_path("prompt").read_text(encoding="utf-8"),
     )
@@ -177,12 +177,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    lock = ROOT / "state/v22_final_execution.lock"
-    try:
-        lock.mkdir()
-    except FileExistsError as exc:
-        raise RuntimeError("FINAL_EXECUTION_ALREADY_ACTIVE") from exc
-    try:
+    with ExecutionLock(ROOT / "state/v22_final_execution.lock"):
         main()
-    finally:
-        lock.rmdir()

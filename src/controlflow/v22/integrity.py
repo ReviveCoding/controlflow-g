@@ -7,10 +7,11 @@ from pathlib import Path
 from typing import Any, cast
 
 import pandas as pd
+import yaml
 
 from controlflow.core.state import atomic_write_json, canonical_json, sha256_file, utc_now
 from controlflow.v22.bundle import verify_bundle
-from controlflow.v22.checkpoint import fingerprint, git_state
+from controlflow.v22.checkpoint import fingerprint, git_state, records_hash
 from controlflow.v22.evaluation import evaluator_protocol_hash
 from controlflow.v22.executor import verify_ledger
 
@@ -95,6 +96,8 @@ def _checkpoint_evidence(root: Path, checkpoint_path: Path, partial_path: Path) 
     partial_ids = [str(row["case_id"]) for row in partial]
     if partial_ids != checkpoint.get("completed_case_ids") or len(partial_ids) != len(set(partial_ids)):
         failures.append("partial_checkpoint_cardinality_mismatch")
+    if records_hash(partial) != checkpoint.get("completed_records_sha256"):
+        failures.append("partial_checkpoint_content_mismatch")
     return {"violations": len(failures), "failures": failures, "completed_cases": len(partial_ids)}
 
 
@@ -122,6 +125,13 @@ def _serving_evidence(root: Path, report: dict[str, Any] | None) -> dict[str, An
         failures.append("request_cardinality_mismatch")
     if recomputed != report.get("failures") or total_failures != report.get("total_structured_failures"):
         failures.append("failure_counts_mismatch")
+    if (
+        report.get("requests")
+        and abs(float(report.get("structured_failure_rate", -1)) - total_failures / int(report["requests"])) > 1e-12
+    ):
+        failures.append("structured_failure_rate_mismatch")
+    if len(frame) and int((~frame.structured_output_valid.astype(bool)).sum()) != total_failures:
+        failures.append("response_validity_diagnostics_mismatch")
     if len(frame):
         comparisons = {
             "llm_p95_seconds": float(frame.llm_latency_seconds.quantile(0.95)),
@@ -133,6 +143,48 @@ def _serving_evidence(root: Path, report: dict[str, Any] | None) -> dict[str, An
                 failures.append(f"{name}_mismatch")
     if report.get("live_model_identity_verified") is not True or report.get("live_command_line_verified") is not True:
         failures.append("live_server_identity_or_command_unverified")
+    try:
+        bundle_path = root / "state/v22_model_bundle.json"
+        bundle = verify_bundle(bundle_path, root)
+        manifest = json.loads((root / "state/v22_dataset_manifest.json").read_text(encoding="utf-8"))
+        validation = manifest["splits"]["VALIDATION"]
+        namespace = Path(validation["runtime_path"]).parts[2]
+        checkpoint = json.loads(
+            (root / f"artifacts/v22/{namespace}/validation.checkpoint.json").read_text(encoding="utf-8")
+        )
+        git_commit, dirty_hash = git_state(root)
+        provenance = report["provenance"]
+        expected_provenance = {
+            "candidate_bundle_hash": bundle["bundle_sha256"],
+            "candidate_bundle_manifest_sha256": sha256_file(bundle_path),
+            "runtime_dataset_sha256": sha256_file(root / validation["runtime_path"]),
+            "evidence_corpus_sha256": sha256_file(root / validation["evidence_path"]),
+            "authorization_state_sha256": sha256_file(root / validation["authorization_path"]),
+            "git_commit": git_commit,
+            "dirty_state_hash": dirty_hash,
+            "checkpoint_fingerprint": checkpoint["fingerprint"],
+            "request_case_ids": frame.case_id.astype(str).tolist(),
+        }
+        if provenance != expected_provenance:
+            failures.append("serving_provenance_mismatch")
+        serving_config = yaml.safe_load((root / bundle["serving_config"]["path"]).read_text(encoding="utf-8"))
+        if any(
+            (
+                report.get("model") != bundle["qwen_model"],
+                report.get("served_model") != bundle["qwen_served_model"],
+                report.get("model_revision") != bundle["qwen_revision"],
+                report.get("vllm_version") != bundle["vllm_version"],
+                report.get("structured_backend") != bundle["structured_output_backend"],
+                report.get("server_args", {}).get("dtype") != serving_config["dtype"],
+                report.get("server_args", {}).get("gpu_memory_utilization") != serving_config["gpu_memory_utilization"],
+                report.get("server_args", {}).get("max_model_len") != serving_config["max_model_len"],
+                report.get("server_args", {}).get("max_num_seqs") != serving_config["concurrency"],
+                report.get("server_args", {}).get("port") != serving_config["port"],
+            )
+        ):
+            failures.append("serving_bundle_binding_mismatch")
+    except (KeyError, OSError, TypeError, ValueError, RuntimeError):
+        failures.append("serving_provenance_invalid")
     return {
         "violations": len(failures),
         "failures": failures,
@@ -161,7 +213,9 @@ def derive_integrity(
     write: bool = True,
 ) -> dict[str, Any]:
     dataset_manifest = json.loads((root / "state/v22_dataset_manifest.json").read_text(encoding="utf-8"))
-    contamination = json.loads((root / dataset_manifest["contamination_report"]["path"]).read_text(encoding="utf-8"))
+    contamination_path = root / dataset_manifest["contamination_report"]["path"]
+    contamination_hash_valid = sha256_file(contamination_path) == dataset_manifest["contamination_report"]["sha256"]
+    contamination = json.loads(contamination_path.read_text(encoding="utf-8"))
     reviews = json.loads((root / "state/v22_review_findings.json").read_text(encoding="utf-8"))
     tests_path = root / "results/v22/v22_tests.xml"
     tests = _test_counts(tests_path)
@@ -198,6 +252,7 @@ def derive_integrity(
     serving_audit = _serving_evidence(root, serving)
     evidence = {
         "contamination": contamination,
+        "contamination_artifact_hash_valid": contamination_hash_valid,
         "tests": {
             **tests,
             "junit_sha256": sha256_file(tests_path),
@@ -215,7 +270,9 @@ def derive_integrity(
         "schema_version": 1,
         "created_at": created_at or utc_now(),
         "evidence": evidence,
-        "leakage_findings": int(contamination["leakage_findings"]) + int(contamination["runtime_schema_violations"]),
+        "leakage_findings": int(contamination["leakage_findings"])
+        + int(contamination["runtime_schema_violations"])
+        + int(not contamination_hash_valid),
         "bundle_violations": bundle_violations,
         "checkpoint_violations": checkpoint_violations,
         "pdp_pep_security_test_failures": tests["failures"] + tests["errors"] + int(not test_evidence_valid),

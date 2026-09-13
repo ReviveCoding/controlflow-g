@@ -4,7 +4,7 @@ import hashlib
 import json
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from controlflow.core.state import atomic_write_json, canonical_json, utc_now
 
@@ -94,7 +94,20 @@ def git_state(root: Path) -> tuple[str, str]:
     return commit, hashlib.sha256(payload.encode()).hexdigest()
 
 
-def write_checkpoint(path: Path, fields: dict[str, Any], *, completed_case_ids: list[str]) -> None:
+def records_hash(records: list[dict[str, Any]]) -> str:
+    """Bind the complete durable record prefix, not merely its case IDs."""
+    return hashlib.sha256(canonical_json(records)).hexdigest()
+
+
+def write_checkpoint(
+    path: Path,
+    fields: dict[str, Any],
+    *,
+    completed_case_ids: list[str],
+    completed_records: list[dict[str, Any]] | None = None,
+) -> None:
+    if completed_records is not None and [str(row["case_id"]) for row in completed_records] != completed_case_ids:
+        raise ValueError("checkpoint records do not match completed case IDs")
     atomic_write_json(
         path,
         {
@@ -103,12 +116,15 @@ def write_checkpoint(path: Path, fields: dict[str, Any], *, completed_case_ids: 
             "fingerprint": fingerprint(fields),
             "fields": fields,
             "completed_case_ids": completed_case_ids,
+            "completed_records_sha256": records_hash(completed_records or []),
         },
     )
 
 
-def validate_checkpoint(path: Path, fields: dict[str, Any]) -> list[str]:
+def validate_checkpoint(path: Path, fields: dict[str, Any]) -> dict[str, Any]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if payload.get("fingerprint") != fingerprint(fields):
         raise RuntimeError("CHECKPOINT_INCOMPATIBLE")
-    return list(payload.get("completed_case_ids", []))
+    if not isinstance(payload.get("completed_records_sha256"), str):
+        raise RuntimeError("CHECKPOINT_INCOMPATIBLE: record binding missing")
+    return cast(dict[str, Any], payload)

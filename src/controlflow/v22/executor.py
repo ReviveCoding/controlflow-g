@@ -90,6 +90,8 @@ class TransactionalExecutor:
                 );
                 CREATE UNIQUE INDEX IF NOT EXISTS one_commit_per_idempotency
                     ON action_ledger(idempotency_key) WHERE committed=1;
+                CREATE UNIQUE INDEX IF NOT EXISTS one_event_per_idempotency
+                    ON action_ledger(idempotency_key);
                 CREATE UNIQUE INDEX IF NOT EXISTS one_logical_action_commit
                     ON action_ledger(case_id,action_hash) WHERE committed=1;
                 CREATE TABLE IF NOT EXISTS approval_consumption (
@@ -187,7 +189,7 @@ class TransactionalExecutor:
             try:
                 conn.execute("BEGIN IMMEDIATE")
                 existing = conn.execute(
-                    "SELECT * FROM action_ledger WHERE idempotency_key=? AND committed=1", (idempotency_key,)
+                    "SELECT * FROM action_ledger WHERE idempotency_key=?", (idempotency_key,)
                 ).fetchone()
                 if existing is not None:
                     if existing["case_id"] != action.case_id or existing["action_hash"] != digest:

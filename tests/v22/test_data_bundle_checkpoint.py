@@ -61,6 +61,7 @@ def test_bundle_verification_fails_closed_on_tamper(tmp_path: Path) -> None:
         "approval_public_key",
         "prompt",
         "schema",
+        "serving_config",
     }
     bindings = {}
     for name in names:
@@ -75,6 +76,7 @@ def test_bundle_verification_fails_closed_on_tamper(tmp_path: Path) -> None:
             "critical_threshold": 0.2,
             "embedding_revision": "revision",
             "qwen_model": "Qwen/model",
+            "qwen_served_model": "served-model",
             "qwen_revision": "commit",
             "vllm_version": "0.29.0",
             "structured_output_backend": "xgrammar",

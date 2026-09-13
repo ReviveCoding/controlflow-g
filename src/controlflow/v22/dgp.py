@@ -5,7 +5,7 @@ import json
 import math
 import random
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -154,12 +154,19 @@ def _era(index: int, *, role: str, seed: int) -> tuple[datetime, datetime, str |
     # Evaluator truth comes from a declarative fixture separate from the candidate
     # bitemporal selection implementation and its policy corpus.
     fixture = _temporal_fixtures()[(index + seed) % len(_temporal_fixtures())]
-    day_offset = (seed // 10 + index) % 3
+    # Each split role owns a disjoint temporal combination for every fixture.
+    # Offsets remain inside the deliberately-invalid June 5-14 overlap window.
+    role_offset = {
+        "TRAIN": 0,
+        "CALIBRATION": 1,
+        "VALIDATION": 2,
+        "QUALIFICATION": 3,
+        "FINAL": 4,
+    }[role]
     event_time = datetime.fromisoformat(str(fixture["event_time"]).replace("Z", "+00:00"))
     system_time = datetime.fromisoformat(str(fixture["system_time"]).replace("Z", "+00:00"))
-    if str(fixture["scenario"]) != "invalid_overlap":
-        event_time = event_time.replace(day=event_time.day + day_offset)
-        system_time = system_time.replace(day=system_time.day + ((day_offset + len(role)) % 3))
+    event_time += timedelta(days=role_offset)
+    system_time += timedelta(days=role_offset)
     return (
         event_time,
         system_time,
