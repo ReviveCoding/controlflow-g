@@ -138,6 +138,26 @@ class EncodedXGBClassifier:
         return cast(np.ndarray, self.classes_[encoded])
 
 
+class BlendedCriticalClassifier:
+    """Fixed heterogeneous ensemble; calibration and thresholding remain separate."""
+
+    def __init__(self, logistic: Pipeline, xgboost: dict[str, Any], *, xgboost_weight: float) -> None:
+        self.logistic = logistic
+        self.xgboost = xgboost
+        self.xgboost_weight = xgboost_weight
+
+    def predict_proba(self, frame: pd.DataFrame) -> np.ndarray:
+        logistic_probability = np.asarray(self.logistic.predict_proba(frame)[:, 1])
+        xgboost_probability = _probability(self.xgboost, frame)
+        positive = self.xgboost_weight * xgboost_probability + (1.0 - self.xgboost_weight) * logistic_probability
+        return np.column_stack((1.0 - positive, positive))
+
+    def set_inference_device(self, device: str) -> None:
+        classifier = self.xgboost["classifier"]
+        classifier.set_params(device=device)
+        classifier.get_booster().set_param({"device": device})
+
+
 def _try_noncritical_xgboost(
     train_x: pd.DataFrame,
     train_y: pd.Series,
@@ -241,6 +261,8 @@ def train_models(
         if '"device":"cuda' not in booster_config:
             raise RuntimeError("XGBOOST_REQUIRED_CUDA_NOT_CONFIRMED")
         candidates["xgboost_cuda"] = (xgb_model, xgb_probabilities)
+        blend = BlendedCriticalClassifier(logistic, xgb_model, xgboost_weight=0.35)
+        candidates["logistic_xgboost_blend_35"] = (blend, blend.predict_proba(validation_x)[:, 1])
         gpu_evidence.update({"xgboost_cuda_ran": True, "device": "cuda", "booster_config": json.loads(booster_config)})
     comparisons: dict[str, Any] = {}
     candidate_calibrations: dict[str, tuple[str, Any, dict[str, float], float, dict[str, float]]] = {}

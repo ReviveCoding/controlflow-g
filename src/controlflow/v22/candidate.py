@@ -49,6 +49,8 @@ class CandidateModelBundle:
         if isinstance(self.critical, dict) and "classifier" in self.critical:
             self.critical["classifier"].set_params(device=inference_device)
             self.critical["classifier"].get_booster().set_param({"device": inference_device})
+        elif hasattr(self.critical, "set_inference_device"):
+            self.critical.set_inference_device(inference_device)
         if hasattr(self.noncritical, "classifier") and hasattr(self.noncritical.classifier, "get_booster"):
             self.noncritical.classifier.set_params(device=inference_device)
             self.noncritical.classifier.get_booster().set_param({"device": inference_device})
