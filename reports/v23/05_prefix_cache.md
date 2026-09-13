@@ -1,0 +1,3 @@
+# V2.3 Prefix Cache
+
+Selected-run Prometheus delta analysis: `{"ending_kv_cache_usage_perc": 0.0, "means": {"inter_token_latency_seconds": 0.03333589283259933, "request_decode_time_seconds": 1.261541304428334, "request_generation_tokens": 38.843333333333334, "request_prefill_time_seconds": 0.12258381514166652, "request_prompt_tokens": 173.15, "request_queue_time_seconds": 0.00013509494167105156, "time_to_first_token_seconds": 0.18104151407877603}, "prefix_cache_hit_rate": 0.46202714409471557, "prefix_cache_hits": 48000.0, "prefix_cache_queries": 103890.0}`. Cold and warm runs are labeled separately; fixed warm-up inputs exclude qualification and final cases.

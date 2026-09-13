@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "status": "INCOMPLETE_NOT_ADMISSIBLE",
+  "completed_candidate_records": 600,
+  "durable_request_attribution_records": 0,
+  "failure_stage": "closing_vllm_metrics_scrape",
+  "failure": "vLLM endpoint unavailable after the WSL/server process exited",
+  "selection_use_permitted": false,
+  "qualification_evidence_use_permitted": false,
+  "partial_aggregate_inspected": false,
+  "disposition": "Preserve for failure diagnosis only; repeat in a fresh immutable namespace after runtime recovery."
+}

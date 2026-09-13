@@ -1,0 +1,140 @@
+                        environments. Uses vendored static assets bundled with
+                        vLLM. (default: False)
+  --enable-per-request-metrics, --no-enable-per-request-metrics
+                         (default: False)
+  --enable-prompt-tokens-details, --no-enable-prompt-tokens-details
+--
+                        Accepts None (meaning "use default"). After
+                        construction, always int. (default: None)
+  --enable-prefix-caching, --no-enable-prefix-caching
+                        Whether to enable prefix caching. (default: None)
+  --gpu-memory-utilization GPU_MEMORY_UTILIZATION
+                        The fraction of GPU memory to be used for the model
+--
+  --mamba-block-size MAMBA_BLOCK_SIZE
+                        Size of a contiguous cache block in number of tokens
+                        for mamba cache. Can be set only when prefix caching
+                        is enabled. Value must be a multiple of 8 to align
+                        with causal_conv1d kernel. (default: None)
+--
+  --mamba-cache-mode {align,all,none}
+                        The cache strategy for Mamba layers:
+                        - "none": set when prefix caching is disabled.
+                        - "all": cache the mamba state of all tokens at
+                        position i * block_size.
+--
+                        token of each scheduler step and when the token is at
+                        position i * block_size. This is the default when
+                        prefix caching is enabled. (default: none)
+  --mamba-ssm-cache-dtype {auto,bfloat16,float16,float32}
+                        The data type to use for the Mamba cache (ssm state
+--
+                        if `None`. Used for testing preemption. (default:
+                        None)
+  --prefix-cache-retention-interval PREFIX_CACHE_RETENTION_INTERVAL
+                        Token interval between retained sliding-window and
+                        Mamba prefix-cache checkpoints. ``0`` retains only
+                        semantic checkpoints, including the latest replay
+                        boundary and shared-prefix junctions. Positive values
+--
+                        densely. Applies only to sliding-window and Mamba
+                        cache groups. (default: UNSET)
+  --prefix-caching-hash-algo {sha256,sha256_cbor,xxhash,xxhash_cbor}
+                        Set the hash algorithm for prefix caching:
+                        - "sha256" uses Pickle for object serialization before
+                        hashing. This is the current default, as SHA256 is the
+--
+                        optional ``xxhash`` package. (default: sha256)
+  --prefix-match-unit PREFIX_MATCH_UNIT
+                        The finest token boundary (in tokens) a prefix-cache
+                        hit can land on.
+                        Prefix-cache keys are computed every
+                        `prefix_match_unit` tokens. It can be set finer than
+                        the physical KV cache block sizes (e.g. 32 vs a
+--
+  --replayssm-buffer-len REPLAYSSM_BUFFER_LEN
+                        ReplaySSM history buffer length B for standard Mamba2
+                        decode. Kimi-K3 speculative decoding does not use B.
+                        Default 16. (default: 16)
+  --use-replayssm, --no-use-replayssm
+--
+                        SSM inputs and skip the per-step full-state store,
+                        writing the checkpoint back only on flush. Requires
+                        mamba_cache_mode 'none' or 'align' (prefix caching)
+                        and the Triton mamba backend; standard (non-
+                        speculative) decode only. In align mode flushes are
+                        most efficient when mamba_block_size is a multiple of
+                        replayssm_buffer_len, but this is not required.
+--
+                        (default: None)
+  --per-request-spec-decode-metrics {detailed,none,summary}
+                        Include per-request speculative-decoding acceptance
+                        metrics in the response under
+                        `metrics.speculative_decoding`. `none` disables;
+                        `summary` adds mean acceptance length, draft
+                        acceptance rate, and the step-by-draft-length
+--
+                        verify step). Only reported for single-sequence
+                        requests (`n == 1`), mirroring the timing metrics. No
+                        effect unless speculative decoding is enabled.
+                        Independent of `--disable-log-stats`. This is the per-
+                        request response-body counterpart of the aggregate
+--
+  --enable-chunked-prefill, --no-enable-chunked-prefill
+                        If True, prefill requests can be chunked based on the
+                        remaining `max_num_batched_tokens`.
+                        The default value here is mainly for convenience when
+                        testing. In real usage, this should be set in
+--
+                        the prompt is longer than this number of tokens. 0
+                        disables the cap (default). (default: 0)
+  --max-num-batched-tokens MAX_NUM_BATCHED_TOKENS
+                        Maximum number of tokens that can be processed in a
+                        single iteration.
+--
+                        the API server process during prefill
+                        (``EngineCoreOutput`` is only emitted once the request
+                        starts producing tokens).  Similarly, prefix-cache
+                        hits (``num_cached_tokens``) are only known to the
+                        OutputProcessor after prefill completes.  This
+--
+                        Maximum number of tokens that the scheduler may issue
+                        in a single iteration.
+                        This is usually equal to max_num_batched_tokens, but
+                        can be smaller in cases when the model might append
+                        tokens into the batch (such as speculative decoding).
+                        Defaults to max_num_batched_tokens.
+                        Parse human-readable integers like '1k', '2M', etc.
+                        Including decimal values with decimal multipliers.
+--
+                        Should either be a valid JSON string or JSON keys
+                        passed individually. (default: None)
+  --optimization-level OPTIMIZATION_LEVEL
+                        The optimization level. These levels trade startup
+                        time cost for performance, with -O0 having the best
+                        startup time and -O3 having the best performance. -O2
+                        is used by default. See OptimizationLevel for full
+                        description. (default: OptimizationLevel.O2)
+  --performance-mode {balanced,interactivity,throughput}
+                        Performance mode for runtime behavior, 'balanced' is
+                        the default. 'interactivity' favors low end-to-end
+                        per-request latency at small batch sizes (fine-grained
+--
+                        passed individually. (default: None)
+  --spec-method {bailing_hybrid_mtp,bailing_hybrid_v3_mtp,custom_class,deepseek_mtp,dflash,dots3_note_mtp,draft_model,dspark,eagle,eagle3,ernie_mtp,exaone4_5_mtp,exaone_moe_mtp,extract_hidden_states,gemma4_mtp,glm4_moe_lite_mtp,glm4_moe_mtp,glm_ocr_mtp,hy_v3_mtp,hy_v4_mtp,inkling_mtp,kimi_k3_mtp,longcat_flash_mtp,medusa,mimo_mtp,mimo_v2_mtp,minimax_m3_mtp,mlp_speculator,mtp,nemotron_h_mtp,ngram,ngram_gpu,pangu_ultra_moe_mtp,qwen3_5_mtp,qwen3_next_mtp,qwen4_exp_mtp,step3p5_mtp,suffix,None}
+                        The name of the speculative method to use. If users
+                        provide and set the `model` param, the speculative
+                        method type will be detected automatically if
+                        possible, if `model` param is not provided, the method
+--
+                        weights, if provided. (default: None)
+  --spec-tokens SPEC_TOKENS
+                        The number of speculative tokens, if provided. It will
+                        default to the number in the draft model config if
+                        present, otherwise, it is required. (default: None)
+  --speculative-config SPECULATIVE_CONFIG, -sc SPECULATIVE_CONFIG
+                        Speculative decoding configuration.
+                        API docs: https://docs.vllm.ai/en/v0.29.0/api/vllm/con
+                        fig/#vllm.config.SpeculativeConfig
+                        Should either be a valid JSON string or JSON keys
+                        passed individually. (default: None)

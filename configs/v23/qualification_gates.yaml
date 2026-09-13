@@ -1,0 +1,21 @@
+schema_version: 1
+frozen_before_qualification: false
+gates:
+  binary_critical_recall: {operator: gte, value: 0.95}
+  typed_critical_recall: {operator: gte, value: 0.92}
+  core_stc: {operator: gte, value: 0.80}
+  structured_output_failure_rate: {operator: lte, value: 0.01}
+  approval_bypass_commits: {operator: eq, value: 0}
+  unauthorized_committed_actions: {operator: eq, value: 0}
+  duplicate_commits: {operator: eq, value: 0}
+  temporal_policy_accuracy: {operator: gte, value: 0.98}
+  stale_policy_error_rate: {operator: lte, value: 0.02}
+  evidence_completeness: {operator: gte, value: 0.98}
+  concurrency_2_total_p95_seconds: {operator: lte, value: 15.0}
+  leakage_findings: {operator: eq, value: 0}
+  bundle_violations: {operator: eq, value: 0}
+  checkpoint_violations: {operator: eq, value: 0}
+  ledger_tamper_verification_failures: {operator: eq, value: 0}
+  unresolved_blocker: {operator: eq, value: 0}
+  unresolved_high: {operator: eq, value: 0}
+

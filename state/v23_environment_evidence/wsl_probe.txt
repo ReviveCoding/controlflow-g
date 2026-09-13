@@ -1,0 +1,7 @@
+Linux JwB 6.18.33.2-microsoft-standard-WSL2 #1 SMP PREEMPT_DYNAMIC Thu Jun 18 21:54:43 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux
+{"torch": "2.13.0+cu130", "cuda_compiled": "13.0", "cuda_available": true, "vllm": "0.29.0"}
+Filesystem         1B-blocks         Used    Available Use% Mounted on
+C:\            1021821579264 919517757440 102303821824  90% /mnt/c
+               total        used        free      shared  buff/cache   available
+Mem:     16628006912   768667648 13148450816     3731456  2710888448 15642447872
+Swap:     4294967296           0  4294967296

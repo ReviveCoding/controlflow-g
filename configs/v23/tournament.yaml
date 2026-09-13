@@ -1,0 +1,16 @@
+schema_version: 1
+development_namespace: development_r23
+concurrency: 2
+warmup_case_count: 8
+screening_requests: 60
+sustained_requests: 400
+soak_requests: 600
+performance_modes: [balanced, interactivity]
+batched_token_budgets: [1024, 2048, 4096]
+token_caps: [160, 128, 96]
+schemas: [current, minimal]
+development_latency_eligibility_seconds: 13.0
+qualification_latency_gate_seconds: 15.0
+bootstrap_seed: 23023
+bootstrap_samples: 2000
+
