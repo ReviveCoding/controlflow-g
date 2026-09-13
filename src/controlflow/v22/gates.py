@@ -24,14 +24,16 @@ def apply_gates(
         "binary_critical_recall": _estimate(metrics, "binary_critical_recall"),
         "typed_critical_recall": _estimate(metrics, "typed_critical_recall"),
         "core_stc": _estimate(metrics, "core_stc"),
-        "structured_output_failure_rate": float(serving["structured_failure_rate"]),
+        "structured_output_failure_rate": _estimate(metrics, "structured_output_failure_rate"),
         "approval_bypass_commits": int(security["approval_bypass_commits"]),
         "unauthorized_committed_actions": int(security["unauthorized_committed_actions"]),
         "duplicate_commits": int(security["duplicate_commits"]),
         "temporal_policy_accuracy": _estimate(metrics, "temporal_policy_accuracy"),
         "stale_policy_error_rate": _estimate(metrics, "stale_policy_error_rate"),
         "evidence_completeness": _estimate(metrics, "evidence_completeness"),
-        "concurrency_2_total_p95_seconds": float(serving["total_p95_seconds"]),
+        "concurrency_2_total_p95_seconds": (
+            float(metrics["latency"]["total_p95_seconds"]) if metrics["latency"].get("concurrency") == 2 else None
+        ),
         "leakage_findings": int(integrity["leakage_findings"]),
         "bundle_violations": int(integrity["bundle_violations"]),
         "checkpoint_violations": int(integrity["checkpoint_violations"]),

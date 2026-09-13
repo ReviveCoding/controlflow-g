@@ -105,6 +105,7 @@ def evaluate(
     output_path: Path,
     *,
     critical_threshold: float,
+    concurrency: int = 1,
 ) -> dict[str, Any]:
     results = pd.read_parquet(results_path)
     truth = pd.read_parquet(truth_path)
@@ -187,7 +188,7 @@ def evaluate(
         "evidence_completeness": wilson(retrieved_required, expected_evidence_total),
         "structured_output_failure_rate": wilson(structured_failures, int(structured_observed.sum())),
         "latency": {
-            "concurrency": None,
+            "concurrency": concurrency,
             "llm_p95_seconds": None
             if results.llm_latency_seconds.dropna().empty
             else float(np.quantile(results.llm_latency_seconds.dropna(), 0.95)),

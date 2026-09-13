@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -261,6 +262,7 @@ class CandidateExecutionWorkflow:
         checkpoint_path: Path,
         checkpoint_fields: dict[str, Any],
         checkpoint_interval: int = 25,
+        concurrency: int = 1,
         **case_options: Any,
     ) -> list[CandidateResult]:
         completed: list[str] = []
@@ -280,17 +282,23 @@ class CandidateExecutionWorkflow:
         else:
             write_checkpoint(checkpoint_path, checkpoint_fields, completed_case_ids=[])
         completed_set = set(completed)
-        for row in frame.to_dict(orient="records"):
-            if str(row["case_id"]) in completed_set:
-                continue
-            result = self.run_case(row, **case_options)
-            serialized = result.model_dump(mode="json")
+        pending = [row for row in frame.to_dict(orient="records") if str(row["case_id"]) not in completed_set]
+        if concurrency < 1:
+            raise ValueError("concurrency must be positive")
+        for offset in range(0, len(pending), checkpoint_interval):
+            batch = pending[offset : offset + checkpoint_interval]
+            if concurrency == 1:
+                batch_results = [self.run_case(row, **case_options) for row in batch]
+            else:
+                with ThreadPoolExecutor(max_workers=concurrency) as pool:
+                    batch_results = list(pool.map(lambda row: self.run_case(row, **case_options), batch))
             with partial_path.open("a", encoding="utf-8") as stream:
-                stream.write(json.dumps(serialized, sort_keys=True) + "\n")
-            records.append(serialized)
-            completed.append(result.case_id)
-            if len(completed) % checkpoint_interval == 0:
-                write_checkpoint(checkpoint_path, checkpoint_fields, completed_case_ids=completed)
+                for result in batch_results:
+                    serialized = result.model_dump(mode="json")
+                    stream.write(json.dumps(serialized, sort_keys=True) + "\n")
+                    records.append(serialized)
+                    completed.append(result.case_id)
+            write_checkpoint(checkpoint_path, checkpoint_fields, completed_case_ids=completed)
         write_checkpoint(checkpoint_path, checkpoint_fields, completed_case_ids=completed)
         pd.DataFrame(records).to_parquet(output_path, index=False)
         return [CandidateResult.model_validate(item) for item in records]

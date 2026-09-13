@@ -28,9 +28,7 @@ def main() -> None:
         raise RuntimeError("V22 qualification is one-shot and has already been executed")
     execution = json.loads((ROOT / "state/v22_execution_state.json").read_text(encoding="utf-8"))
     validation_ledger = ROOT / execution["validation_ledger"]["path"]
-    integrity = verify_integrity_report(
-        ROOT / "state/v22_integrity.json", root=ROOT, ledger_path=validation_ledger
-    )
+    integrity = verify_integrity_report(ROOT / "state/v22_integrity.json", root=ROOT, ledger_path=validation_ledger)
     reviews = json.loads((ROOT / "state/v22_review_findings.json").read_text(encoding="utf-8"))
     if not integrity.get("qualification_eligible") or reviews["counts"] != {
         "unresolved_BLOCKER": 0,
@@ -141,7 +139,7 @@ def main() -> None:
         "evaluator_protocol_hash": evaluator_protocol_hash(ROOT),
         "gate_config_hash": sha256_file(ROOT / "configs/v22/qualification_gates.yaml"),
         "seed": 22901,
-        "concurrency": 1,
+        "concurrency": 2,
     }
     output_path = ROOT / "results/v22/qualification_candidate_results.parquet"
     runner.run_dataset(
@@ -150,6 +148,7 @@ def main() -> None:
         partial_path=ROOT / "artifacts/v22/qualification.partial.jsonl",
         checkpoint_path=ROOT / "artifacts/v22/qualification.checkpoint.json",
         checkpoint_fields=checkpoint_fields,
+        concurrency=2,
     )
     # Evaluator truth is opened only after candidate output has closed.
     metrics_path = ROOT / "results/v22/qualification_metrics.json"
@@ -159,6 +158,7 @@ def main() -> None:
         ledger,
         metrics_path,
         critical_threshold=bundle.threshold,
+        concurrency=2,
     )
     gate_result = apply_gates(
         metrics=metrics,
