@@ -43,6 +43,15 @@ class CandidateModelBundle:
         self.noncritical = joblib.load(root / self.payload["noncritical_model"]["path"])
         self.root_model = joblib.load(root / self.payload["root_model"]["path"])
         self.novelty = joblib.load(root / self.payload["novelty_model"]["path"])
+        inference_device = str(self.payload["tabular_inference_device"])
+        if inference_device not in {"cpu", "cuda"}:
+            raise RuntimeError("CANDIDATE_BUNDLE_MISMATCH: tabular_inference_device")
+        if isinstance(self.critical, dict) and "classifier" in self.critical:
+            self.critical["classifier"].set_params(device=inference_device)
+            self.critical["classifier"].get_booster().set_param({"device": inference_device})
+        if hasattr(self.noncritical, "classifier") and hasattr(self.noncritical.classifier, "get_booster"):
+            self.noncritical.classifier.set_params(device=inference_device)
+            self.noncritical.classifier.get_booster().set_param({"device": inference_device})
 
     def artifact_path(self, name: str) -> Path:
         binding = self.payload[name]

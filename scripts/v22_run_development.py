@@ -188,6 +188,7 @@ def main() -> None:
         "qwen_revision": serving["revision"],
         "vllm_version": _vllm_version(environment),
         "structured_output_backend": serving["structured_output_backend"],
+        "tabular_inference_device": "cpu",
         "prompt": _binding(ROOT / "configs/v22/explanation_prompt.txt"),
         "schema": _binding(ROOT / "configs/v22/explanation_schema.json"),
     }

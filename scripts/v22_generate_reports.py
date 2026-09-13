@@ -57,7 +57,8 @@ def main() -> None:
         "02_model_training.md",
         "V2.2 Model Training",
         "Models consume runtime-observable numeric, categorical, and narrative features. TRAIN fits the models; "
-        "VALIDATION selects architectures. GPU claims are limited to the device evidence in the machine report.\n\n"
+        "VALIDATION selects architectures. GPU claims are limited to the device evidence in the machine report. "
+        "The bundle explicitly binds tabular inference to CPU so live WSL vLLM exclusively owns VRAM.\n\n"
         f"Selected critical model: {None if training is None else training.get('selected_critical_model')}. "
         f"Selected noncritical model: {None if training is None else training.get('selected_noncritical_model')}. "
         f"GPU evidence: {None if training is None else training.get('gpu_evidence')}.",

@@ -25,6 +25,7 @@ REQUIRED_BINDINGS = frozenset(
         "qwen_revision",
         "vllm_version",
         "structured_output_backend",
+        "tabular_inference_device",
         "prompt",
         "schema",
     }
@@ -58,6 +59,7 @@ def verify_bundle(path: Path, root: Path) -> dict[str, Any]:
         "qwen_revision",
         "vllm_version",
         "structured_output_backend",
+        "tabular_inference_device",
     }:
         binding = payload[name]
         artifact = (root / binding["path"]).resolve()

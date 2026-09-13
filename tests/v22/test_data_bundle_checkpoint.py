@@ -78,6 +78,7 @@ def test_bundle_verification_fails_closed_on_tamper(tmp_path: Path) -> None:
             "qwen_revision": "commit",
             "vllm_version": "0.29.0",
             "structured_output_backend": "xgrammar",
+            "tabular_inference_device": "cpu",
         },
     )
     verify_bundle(path, tmp_path)
