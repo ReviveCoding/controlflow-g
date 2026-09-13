@@ -77,13 +77,27 @@ class StructuredVllmClient:
             diagnostic["latency_seconds"] = elapsed
             self.diagnostics.append(diagnostic)
             return content, False, elapsed, ()
+        supplied_evidence = tuple(str(item) for item in inputs["evidence_ids"])
+        returned_evidence = tuple(explanation.evidence_ids)
+        # Evidence references are a set-valued semantic field; ordering does not
+        # change which documents support the explanation. Duplicates still fail.
+        evidence_valid = len(returned_evidence) == len(set(returned_evidence)) and set(returned_evidence) == set(
+            supplied_evidence
+        )
         semantic_valid = (not self.semantic_verify) or (
-            explanation.case_id == inputs["case_id"]
-            and tuple(explanation.evidence_ids) == tuple(inputs["evidence_ids"])
-            and explanation.policy_id == inputs["policy_id"]
+            explanation.case_id == inputs["case_id"] and evidence_valid and explanation.policy_id == inputs["policy_id"]
         )
         elapsed = time.perf_counter() - started
         diagnostic["semantic_reference_failure"] = not semantic_valid
+        if not semantic_valid:
+            diagnostic["semantic_reference_comparison"] = {
+                "expected_case_id": inputs["case_id"],
+                "returned_case_id": explanation.case_id,
+                "expected_evidence_ids": list(supplied_evidence),
+                "returned_evidence_ids": list(returned_evidence),
+                "expected_policy_id": inputs["policy_id"],
+                "returned_policy_id": explanation.policy_id,
+            }
         diagnostic["latency_seconds"] = elapsed
         self.diagnostics.append(diagnostic)
         return explanation.summary, semantic_valid, elapsed, explanation.claims
