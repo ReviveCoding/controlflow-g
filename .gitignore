@@ -26,6 +26,7 @@ data/splits/
 data/sealed/
 data/streaming/
 data/stream/
+data/v2/
 state/*.json
 state/*.jsonl
 state/*.lock

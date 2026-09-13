@@ -1,0 +1,12 @@
+schema_version: 1
+critical_recall_target: 0.92
+review_threshold_selection: validation_only
+outcomes: [AUTO, REVIEW_REQUIRED, INSUFFICIENT_EVIDENCE, DENY]
+actions:
+  - CLOSE_NO_ACTION
+  - REQUEST_EVIDENCE
+  - ESCALATE_CONTROL_OWNER
+  - INITIATE_REMEDIATION_REVIEW
+  - DENY_UNAUTHORIZED_ACTION
+irreversible_action_from_llm_allowed: false
+authorization_external_to_llm: true
