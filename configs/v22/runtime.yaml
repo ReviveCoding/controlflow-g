@@ -1,14 +1,14 @@
 schema_version: 1
 workflow_version: v22-workflow-1
 development:
-  namespace: development_r10
+  namespace: development_r11
   train_count: 1200
   calibration_count: 400
   validation_count: 400
   seeds:
-    train: 22081
-    calibration: 22082
-    validation: 22083
+    train: 22091
+    calibration: 22092
+    validation: 22093
 retrieval:
   top_k: 2
   lexical_weight: 1.0

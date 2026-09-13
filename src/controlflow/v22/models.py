@@ -191,7 +191,9 @@ def train_models(
             "validation_brier": float(brier_score_loss(validation_critical, probabilities)),
             "validation_recall_at_0_5": float(recall_score(validation_critical, probabilities >= 0.5, zero_division=0)),
         }
-    selected_name = min(comparisons, key=lambda item: comparisons[item]["validation_brier"])
+    recall_eligible = [name for name, metrics in comparisons.items() if metrics["validation_recall_at_0_5"] >= 0.95]
+    selection_pool = recall_eligible or list(comparisons)
+    selected_name = min(selection_pool, key=lambda item: comparisons[item]["validation_brier"])
     selected_model = candidates[selected_name][0]
     uncalibrated = _probability(selected_model, calibration_x)
     # Select calibration method on a deterministic internal CALIBRATION holdback,
@@ -298,6 +300,10 @@ def train_models(
         },
         "critical_candidates": comparisons,
         "selected_critical_model": selected_name,
+        "critical_model_selection_rule": (
+            "VALIDATION recall at 0.5 >= 0.95, then minimum VALIDATION Brier; "
+            "if no candidate is eligible, minimum VALIDATION Brier"
+        ),
         "noncritical_candidates": noncritical_comparisons,
         "selected_noncritical_model": selected_noncritical_name,
         "calibration_candidates": calibration_scores,
