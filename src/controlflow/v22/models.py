@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any, cast
@@ -15,7 +16,7 @@ from sklearn.metrics import brier_score_loss, classification_report, recall_scor
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import FunctionTransformer, OneHotEncoder, StandardScaler
 
-from controlflow.core.state import atomic_write_json, sha256_file, utc_now
+from controlflow.core.state import atomic_write_json, canonical_json, sha256_file, utc_now
 
 NUMERIC = [
     "control_test_count",
@@ -241,6 +242,21 @@ def train_models(
     allow_gpu: bool,
 ) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
+    data_lineage = {
+        "TRAIN": {
+            "runtime_sha256": sha256_file(train_runtime),
+            "truth_sha256": sha256_file(train_truth),
+        },
+        "CALIBRATION": {
+            "runtime_sha256": sha256_file(calibration_runtime),
+            "truth_sha256": sha256_file(calibration_truth),
+        },
+        "VALIDATION": {
+            "runtime_sha256": sha256_file(validation_runtime),
+            "truth_sha256": sha256_file(validation_truth),
+        },
+    }
+    training_data_hash = hashlib.sha256(canonical_json(data_lineage)).hexdigest()
     train_x, train_critical = _target(train_runtime, train_truth, "truth_critical")
     calibration_x, calibration_critical = _target(calibration_runtime, calibration_truth, "truth_critical")
     validation_x, validation_critical = _target(validation_runtime, validation_truth, "truth_critical")
@@ -394,6 +410,8 @@ def train_models(
             "calibration_threshold": "CALIBRATION",
             "architecture_selection": "VALIDATION",
         },
+        "data_lineage": data_lineage,
+        "training_data_hash": training_data_hash,
         "critical_candidates": comparisons,
         "selected_critical_model": selected_name,
         "critical_model_selection_rule": (
@@ -428,6 +446,8 @@ def train_models(
             "threshold_quantile": 0.95,
             "threshold": novelty_threshold,
             "embedding_revision": "tfidf-v22-1",
+            "training_hash": hashlib.sha256(canonical_json(data_lineage["TRAIN"])).hexdigest(),
+            "threshold_hash": hashlib.sha256(canonical_json(data_lineage["CALIBRATION"])).hexdigest(),
         },
         "artifacts": {
             "critical_model": {"path": critical_artifact.as_posix(), "sha256": sha256_file(critical_artifact)},

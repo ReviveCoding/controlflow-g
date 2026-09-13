@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from controlflow.core.state import sha256_file
+from controlflow.core.state import atomic_write_json, canonical_json, sha256_file
 from controlflow.v22.bundle import verify_bundle, write_bundle
 from controlflow.v22.candidate import CandidateExecutionWorkflow, CandidateModelBundle
 from controlflow.v22.checkpoint import REQUIRED_FIELDS
@@ -102,6 +102,37 @@ def test_bundle_verification_fails_closed_on_tamper(tmp_path: Path) -> None:
         artifact = tmp_path / f"{name}.bin"
         artifact.write_bytes(name.encode())
         bindings[name] = {"path": artifact.name, "sha256": sha256_file(artifact)}
+    lineage = {
+        role: {"runtime_sha256": f"{role}-runtime", "truth_sha256": f"{role}-truth"}
+        for role in ("TRAIN", "CALIBRATION", "VALIDATION")
+    }
+    import hashlib
+
+    novelty = {
+        "model_type": "IsolationForest",
+        "fit_split": "TRAIN",
+        "threshold_split": "CALIBRATION",
+        "threshold": 0.5,
+        "embedding_revision": "revision",
+        "training_hash": hashlib.sha256(canonical_json(lineage["TRAIN"])).hexdigest(),
+        "threshold_hash": hashlib.sha256(canonical_json(lineage["CALIBRATION"])).hexdigest(),
+    }
+    training_report = tmp_path / "training_report.json"
+    atomic_write_json(
+        training_report,
+        {
+            "data_lineage": lineage,
+            "training_data_hash": hashlib.sha256(canonical_json(lineage)).hexdigest(),
+            "novelty": novelty,
+        },
+    )
+    dataset_manifest = tmp_path / "dataset_manifest.json"
+    atomic_write_json(
+        dataset_manifest,
+        {"splits": {role: values for role, values in lineage.items()}},
+    )
+    bindings["training_report"] = {"path": training_report.name, "sha256": sha256_file(training_report)}
+    bindings["dataset_manifest"] = {"path": dataset_manifest.name, "sha256": sha256_file(dataset_manifest)}
     path = tmp_path / "bundle.json"
     write_bundle(
         path,
@@ -115,6 +146,7 @@ def test_bundle_verification_fails_closed_on_tamper(tmp_path: Path) -> None:
             "vllm_version": "0.29.0",
             "structured_output_backend": "xgrammar",
             "tabular_inference_device": "cpu",
+            "novelty_provenance": novelty,
         },
     )
     verify_bundle(path, tmp_path)

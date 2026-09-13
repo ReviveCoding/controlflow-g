@@ -15,6 +15,9 @@ REQUIRED_BINDINGS = frozenset(
         "noncritical_model",
         "root_model",
         "novelty_model",
+        "training_report",
+        "dataset_manifest",
+        "novelty_provenance",
         "embedding_revision",
         "retrieval_config",
         "temporal_config",
@@ -63,10 +66,31 @@ def verify_bundle(path: Path, root: Path) -> dict[str, Any]:
         "vllm_version",
         "structured_output_backend",
         "tabular_inference_device",
+        "novelty_provenance",
     }:
         binding = payload[name]
         artifact = (root / binding["path"]).resolve()
         artifact.relative_to(root.resolve())
         if not artifact.is_file() or sha256_file(artifact) != binding["sha256"]:
             raise RuntimeError(f"CANDIDATE_BUNDLE_MISMATCH: {name}")
+    report = json.loads((root / payload["training_report"]["path"]).read_text(encoding="utf-8"))
+    manifest = json.loads((root / payload["dataset_manifest"]["path"]).read_text(encoding="utf-8"))
+    if payload["novelty_provenance"] != report.get("novelty"):
+        raise RuntimeError("CANDIDATE_BUNDLE_MISMATCH: novelty_provenance")
+    if report.get("training_data_hash") != hashlib.sha256(canonical_json(report.get("data_lineage", {}))).hexdigest():
+        raise RuntimeError("CANDIDATE_BUNDLE_MISMATCH: training_data_hash")
+    expected_lineage = {
+        role: {
+            "runtime_sha256": manifest["splits"][role]["runtime_sha256"],
+            "truth_sha256": manifest["splits"][role]["truth_sha256"],
+        }
+        for role in ("TRAIN", "CALIBRATION", "VALIDATION")
+    }
+    if report.get("data_lineage") != expected_lineage:
+        raise RuntimeError("CANDIDATE_BUNDLE_MISMATCH: data_lineage")
+    novelty = payload["novelty_provenance"]
+    if novelty.get("training_hash") != hashlib.sha256(canonical_json(expected_lineage["TRAIN"])).hexdigest():
+        raise RuntimeError("CANDIDATE_BUNDLE_MISMATCH: novelty_training_hash")
+    if novelty.get("threshold_hash") != hashlib.sha256(canonical_json(expected_lineage["CALIBRATION"])).hexdigest():
+        raise RuntimeError("CANDIDATE_BUNDLE_MISMATCH: novelty_threshold_hash")
     return payload
