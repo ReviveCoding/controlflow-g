@@ -1,3 +1,3 @@
 # V2.3 Limitations
 
-This is a local production-like simulation, not a bank deployment, and it performs no real financial action. Synthetic labels do not establish production validity. A local hash chain depends on trusted external anchoring. Laptop GPU thermals and host contention may limit transferability. Zero observed security failures do not prove zero risk.
+This is a local production-like simulation, not a bank deployment, and it performs no real financial action. Synthetic labels do not establish production validity. A local hash chain depends on trusted external anchoring. Laptop GPU thermals and host contention may limit transferability. Zero observed security failures do not prove zero risk. The V23QUAL generator did not guarantee a positive stale-policy denominator, so the frozen stale-policy gate was not estimable in this draw. The SQLite artifact binding was captured before final connection teardown and did not remain byte-stable after process exit.

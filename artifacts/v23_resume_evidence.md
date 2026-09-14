@@ -1,0 +1,13 @@
+# V2.3 Resume Evidence
+
+- `state/v23_historical_boundary.json` `903d5c4c939934960f03728ab43eca9e33276a0cdcf91a577ac571658ea6f817`
+- `state/v23_environment_manifest.json` `3bf79c0c624cfb674337c96f06192d2a08ff3e937e132afed8db6d19536afcde`
+- `state/v23_typed_core_manifest.json` `aa18b22a3c594790ed98349ada1e01ffd0963b831cda7bd1bc3480bbb61968b2`
+- `state/v23_serving_tournament.json` `5d462ea9fbc13f561010d4738563123942246d5970a4567660d365e484c2003e`
+- `state/v23_latency_attribution.json` `c04b6007a7628598c1b6cadc8d1b2e8995f2685c9681b0525c67c831e991ff25`
+- `state/v23_review_findings.json` `943264c2153d84904231b4cb26217442f8a00438006d5cc14d3ba82ee2b655a1`
+- `state/v23_qualification_manifest.json` `300d2de6c508faa7df5990ea9811d265af4649bc81d3b4ec934afd5373b86db2`
+- `state/v23_freeze_manifest.json` `86e6803fa632ce6177e5433ad1ab41f530c993880e3aaf75bca28dd4327e1ed0`
+- `state/v23_execution_state.json` `4a63d3238ea772f02299233e8e814be4666df99fa4c4bb94a07f3f60e8b0b2aa`
+- `state/v23_qualification_postclose_integrity.json` `ade7b577240e7b7087e0982b37f7ff61b9606fe6865d4a89e264c57aa53bfb47`
+- `state/v23_release_decision.json` `b32086cfd8a90e158ae904d37c4024ad06138625101e7e72c14a04629ae0e2ee`

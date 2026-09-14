@@ -1,3 +1,5 @@
 # V2.3 Internal Qualification
 
-Status: `NOT_RUN`. V23QUAL is a fresh one-shot protocol and is not generated before pre-qualification review clearance.
+Status: `V23_DEVELOPMENT_NO_GO`. The fresh 600-case V23QUAL was run exactly once after review clearance. Sixteen of seventeen frozen gates passed. Concurrency-2 total P95 was 5.8415 seconds; binary and typed critical recall were both 88/89 (0.9888); Core STC was 498/600 (0.8300); structured failures, approval bypass commits, unauthorized commits, duplicate commits, leakage findings, checkpoint violations, and ledger verification failures were zero; temporal accuracy and evidence completeness were 1.0. The stale-policy error gate failed because the generated cohort contained zero stale-policy denominator cases, producing a null estimate rather than a value <= 0.02. Machine-readable evidence is in `state/v23_qualification_manifest.json` and `results/v23/qualification_metrics.json`.
+
+After process exit, the SQLite file changed from its in-process bound size/hash while its 600-event ledger still verified. This post-close binding violation is recorded separately in `state/v23_qualification_postclose_integrity.json` and is an additional reason not to advance.
