@@ -42,7 +42,7 @@ def test_latent_truth_is_physically_absent_from_runtime_and_splits_are_independe
 def test_prior_runtime_manifest_covers_historical_and_development_runtime_data() -> None:
     paths = resolve_prior_runtime_paths(
         Path(__file__).resolve().parents[2],
-        Path(__file__).resolve().parents[2] / "configs/v22/prior_runtime_manifest.yaml",
+        Path(__file__).resolve().parents[2] / "configs/v24/prior_runtime_manifest.yaml",
         excluded_directory=Path(__file__).resolve().parents[2] / "data/v22/qualification/V22QUAL",
     )
     relative = {path.relative_to(Path(__file__).resolve().parents[2]).as_posix() for path in paths}

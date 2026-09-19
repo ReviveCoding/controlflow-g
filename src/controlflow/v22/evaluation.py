@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import math
-import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +10,7 @@ import pandas as pd
 
 from controlflow.core.state import atomic_write_json, sha256_file, utc_now
 from controlflow.v22.executor import ledger_security_metrics, verify_ledger
+from controlflow.v24.sqlite_lifecycle import owned_connection
 
 
 def evaluator_protocol_hash(root: Path) -> str:
@@ -111,7 +111,7 @@ def evaluate(
 ) -> dict[str, Any]:
     results = pd.read_parquet(results_path)
     truth = pd.read_parquet(truth_path)
-    with sqlite3.connect(ledger_path) as conn:
+    with owned_connection(ledger_path) as conn:
         events = pd.read_sql_query("SELECT * FROM action_ledger", conn)
         states = pd.read_sql_query("SELECT * FROM case_state", conn)
     assert_exact_evaluation_cardinality(truth, results, events)

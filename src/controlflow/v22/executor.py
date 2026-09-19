@@ -5,6 +5,8 @@ import json
 import sqlite3
 import threading
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -13,6 +15,7 @@ from controlflow.core.state import canonical_json
 from controlflow.v22.approval import ApprovalVerifier, proposed_action_hash
 from controlflow.v22.policy import ActionRegistry, PolicyDecisionPoint
 from controlflow.v22.schemas import PolicyDecision, PolicyInput, PolicyResult, ProposedAction, SignedApproval
+from controlflow.v24.sqlite_lifecycle import owned_connection
 
 
 class InjectedCrash(RuntimeError):
@@ -115,11 +118,12 @@ class TransactionalExecutor:
                 raise RuntimeError("RESTART_LEDGER_RECOVERY_FAILED")
             raise InjectedCrash(fault)
 
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.path, timeout=30, isolation_level=None)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys=ON")
-        return conn
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        with owned_connection(self.path) as conn:
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA foreign_keys=ON")
+            yield conn
 
     def _crash(self, point: str) -> None:
         if self.fault == point:
@@ -334,7 +338,7 @@ class TransactionalExecutor:
 
 
 def verify_ledger(path: Path) -> dict[str, Any]:
-    with sqlite3.connect(path) as conn:
+    with owned_connection(path) as conn:
         conn.row_factory = sqlite3.Row
         rows = [dict(row) for row in conn.execute("SELECT * FROM action_ledger ORDER BY sequence_id")]
         head = conn.execute("SELECT event_hash,sequence_id FROM ledger_head WHERE singleton=1").fetchone()
@@ -365,7 +369,7 @@ def verify_ledger(path: Path) -> dict[str, Any]:
 
 
 def ledger_security_metrics(path: Path) -> dict[str, int]:
-    with sqlite3.connect(path) as conn:
+    with owned_connection(path) as conn:
         conn.row_factory = sqlite3.Row
         review_denominator = int(
             conn.execute("SELECT COUNT(*) FROM action_ledger WHERE review_required=1").fetchone()[0]

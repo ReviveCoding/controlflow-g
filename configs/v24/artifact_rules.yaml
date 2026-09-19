@@ -1,0 +1,28 @@
+schema_version: 1
+qualification_roots:
+  - data/v24/qualification/V24QUAL
+  - results/v24/qualification
+  - artifacts/v24/qualification
+final_roots:
+  - data/v24/final/V24FINAL
+  - results/v24/final
+  - artifacts/v24/final
+allowed_ephemeral_files: []
+deferred_receipt_files:
+  - results/v24/qualification/gate_decision.json
+state_substantive_files:
+  - state/v24_qualification_bindings.json
+  - state/v24_unbound_artifacts.json
+  - state/v24_postclose_verification.json
+  - results/v24/qualification/gate_decision.json
+state_substantive_patterns:
+  - v24_qualification*.json
+  - v24_postclose*.json
+  - v24_unbound*.json
+terminal_root_anchors:
+  - state/v24_qualification_closure_receipt.json
+  - state/v24_qualification_manifest.json
+  - state/v24_qualification_manifest.proposed.json
+  - state/v24_qualification_terminal_anchor.json
+substantive_patterns:
+  - "**/*"
