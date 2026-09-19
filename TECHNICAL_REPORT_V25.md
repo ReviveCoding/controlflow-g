@@ -1,0 +1,5 @@
+# ControlFlow-G V2.5 technical report
+
+V2.5 implemented a typed versioned checkpoint contract and executed a real 60-case development closure rehearsal through the qualification producer-consumer path. The rehearsal passed SQLite finalization, hash stability, denominator recomputation, artifact binding, post-close verification, receipt, and terminal verification. The full static/test bar passed, and three independent prequalification reviews cleared all BLOCKER/HIGH findings. See `reports/v25/01_historical_boundary.md` through `reports/v25/07_prequalification_reviews.md` for source-bound details.
+
+After the executable freeze, exactly one fresh 600-case V25QUAL cohort passed structural admission. The frozen runner then failed before candidate access because it compared a recomputed contamination report including a new `created_at` timestamp. V25QUAL is permanently consumed as `V25_DEVELOPMENT_NO_GO`. No final holdout was created or executed. The release decision is **NO_PROMOTE**. See `state/v25_qualification_failure.json`, `state/v25_release_decision.json`, and `reports/v25/08_internal_qualification.md` through `reports/v25/13_future_work.md`.
