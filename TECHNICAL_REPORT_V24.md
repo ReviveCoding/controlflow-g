@@ -1,0 +1,7 @@
+# ControlFlow-G V2.4 technical report
+
+ControlFlow-G V2.4 was a qualification-integrity closure study of a local enterprise-style governed-agent prototype. The V2.3 candidate core was preserved except for explicit SQLite connection closure. A deterministic 600-case V24QUAL was generated after the committed freeze and passed pre-execution structural admission. Three independent pre-qualification reviews had cleared BLOCKER/HIGH findings, and the full admitted static/test gate passed (`state/v24_static_quality.json`).
+
+The one-shot V24QUAL execution completed. SQLite finalization, ledger verification, and two-sample byte stability succeeded, and diagnostic denominator recomputation found adequate cohorts. However, the separate post-close verifier failed because its frozen code read `critical_threshold` from the checkpoint top level instead of the actual nested `fields` object (`state/v24_postclose_verification.json`). Under the predeclared integrity protocol, that failure makes V24QUAL permanently consumed diagnostic evidence, not an admissible qualification. Diagnostic quality figures are in `reports/v24/10_internal_qualification.md`; they do not support promotion.
+
+No post-qualification review, V24FINAL generation, or final execution occurred. The decision is `NO_PROMOTE` on integrity grounds, with no frozen-final gate result (`state/v24_release_decision.json`). Correcting this bug requires a new iteration and new holdouts. This study is not a production bank deployment and performed no real financial action.

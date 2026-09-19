@@ -1,0 +1,3 @@
+# Internal qualification
+
+V24QUAL was generated once, admitted before inference, and executed once at actual LLM concurrency two (`state/v24_qualification_manifest.json`, `results/v24/qualification/aggregate_metrics.json`). Diagnostic recomputation found binary and typed critical recall 141/141, Core STC 491/600, stale-policy errors 0/150, evidence completeness 1034/1034, and zero observed bypass, unauthorized, and duplicate commits; total P95 was 7.719374 seconds (`results/v24/qualification/denominators.json`, `aggregate_metrics.json`). These are **not admissible qualification results** because `state/v24_postclose_verification.json` failed on the frozen checkpoint-field bug. Qualification status is `V24_DEVELOPMENT_NO_GO`, and V24QUAL is permanently consumed.

@@ -1,0 +1,1 @@
+{"failures":["freeze_or_denominator_verification:'critical_threshold'"],"ledger":{"event_count":600,"failures":[],"head":{"event_hash":"d3d07400ff039a66dd9d54aab7c533f1f2d4933c81cba803225add69cdc69059","sequence_id":600},"valid":true},"schema_version":1,"status":"FAIL"}
