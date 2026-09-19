@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 
 from controlflow.v22.bundle import verify_bundle
-from controlflow.v22.checkpoint import records_hash, validate_checkpoint, write_checkpoint
+from controlflow.v22.checkpoint import fingerprint, records_hash, validate_checkpoint, write_checkpoint
 from controlflow.v22.executor import TransactionalExecutor
 from controlflow.v22.models import calibrated_probability
 from controlflow.v22.retrieval import EvidenceRetriever
@@ -32,6 +32,7 @@ from controlflow.v22.schemas import (
     SignedApproval,
 )
 from controlflow.v22.temporal import CandidateTemporalRetriever
+from controlflow.v25.checkpoint_contract import CheckpointEnvelope
 
 
 class CandidateModelBundle:
@@ -276,13 +277,27 @@ class CandidateExecutionWorkflow:
         checkpoint_fields: dict[str, Any],
         checkpoint_interval: int = 25,
         concurrency: int = 1,
+        checkpoint_contract: bool = False,
         **case_options: Any,
     ) -> list[CandidateResult]:
         completed: list[str] = []
         records: list[dict[str, Any]] = []
         if checkpoint_path.exists():
-            checkpoint = validate_checkpoint(checkpoint_path, checkpoint_fields)
-            completed = list(checkpoint.get("completed_case_ids", []))
+            if checkpoint_contract:
+                try:
+                    view = CheckpointEnvelope.load(checkpoint_path)
+                except ValueError as exc:
+                    raise RuntimeError("CHECKPOINT_INCOMPATIBLE: invalid checkpoint schema") from exc
+                if view.fingerprint != fingerprint(checkpoint_fields):
+                    raise RuntimeError("CHECKPOINT_INCOMPATIBLE")
+                completed = list(view.completed_case_ids)
+                completed_records_sha256 = view.completed_records_sha256
+            else:
+                # Historical V1-V24 diagnostic callers retain their original
+                # checkpoint validator; V25 explicitly enables the typed contract.
+                legacy_checkpoint = validate_checkpoint(checkpoint_path, checkpoint_fields)
+                completed = list(legacy_checkpoint.get("completed_case_ids", []))
+                completed_records_sha256 = legacy_checkpoint["completed_records_sha256"]
             if not partial_path.exists():
                 if completed:
                     raise RuntimeError("CHECKPOINT_INCOMPATIBLE: partial output missing")
@@ -292,7 +307,7 @@ class CandidateExecutionWorkflow:
             partial_ids = [str(item["case_id"]) for item in records]
             if partial_ids[: len(completed)] != completed or len(partial_ids) != len(set(partial_ids)):
                 raise RuntimeError("CHECKPOINT_INCOMPATIBLE: partial output does not match checkpoint")
-            if records_hash(records[: len(completed)]) != checkpoint["completed_records_sha256"]:
+            if records_hash(records[: len(completed)]) != completed_records_sha256:
                 raise RuntimeError("CHECKPOINT_INCOMPATIBLE: completed partial records were modified")
             ledger_rows = {str(row["event_id"]): row for row in self.candidate.executor.rows("action_ledger")}
             for record in records[: len(completed)]:

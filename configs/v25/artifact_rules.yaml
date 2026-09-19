@@ -1,0 +1,58 @@
+schema_version: 1
+development_roots:
+  - data/v25/development/rehearsal_25013
+  - results/v25/development/rehearsal_25013
+  - artifacts/v25/development/rehearsal_25013
+qualification_roots:
+  - data/v25/qualification/V25QUAL
+  - results/v25/qualification
+  - artifacts/v25/qualification
+final_roots:
+  - data/v25/final/V25FINAL
+  - results/v25/final
+  - artifacts/v25/final
+allowed_ephemeral_files: []
+deferred_receipt_files:
+  - results/v25/development/rehearsal_25013/gate_decision.json
+  - results/v25/qualification/gate_decision.json
+  - results/v25/final/gate_decision.json
+development_state_substantive_files:
+  - state/v25_development_rehearsal_25013_bindings.json
+  - state/v25_development_rehearsal_25013_unbound_artifacts.json
+  - state/v25_development_rehearsal_25013_postclose_verification.json
+  - results/v25/development/rehearsal_25013/gate_decision.json
+development_terminal_root_anchors:
+  - state/v25_development_rehearsal_25013_closure_receipt.json
+  - state/v25_development_rehearsal_25013_manifest.json
+  - state/v25_development_rehearsal_25013_manifest.proposed.json
+  - state/v25_development_rehearsal_25013_terminal_anchor.json
+final_state_substantive_files:
+  - state/v25_final_bindings.json
+  - state/v25_final_unbound_artifacts.json
+  - state/v25_final_postclose_verification.json
+  - results/v25/final/gate_decision.json
+final_terminal_root_anchors:
+  - state/v25_final_closure_receipt.json
+  - state/v25_final_manifest.json
+  - state/v25_final_manifest.proposed.json
+  - state/v25_final_terminal_anchor.json
+state_substantive_files:
+  - state/v25_qualification_bindings.json
+  - state/v25_unbound_artifacts.json
+  - state/v25_postclose_verification.json
+  - results/v25/qualification/gate_decision.json
+qualification_state_substantive_patterns:
+  - v25_qualification*.json
+  - v25_postclose*.json
+  - v25_unbound*.json
+development_state_substantive_patterns:
+  - v25_development_rehearsal_25013*.json
+final_state_substantive_patterns:
+  - v25_final*.json
+terminal_root_anchors:
+  - state/v25_qualification_closure_receipt.json
+  - state/v25_qualification_manifest.json
+  - state/v25_qualification_manifest.proposed.json
+  - state/v25_qualification_terminal_anchor.json
+substantive_patterns:
+  - "**/*"

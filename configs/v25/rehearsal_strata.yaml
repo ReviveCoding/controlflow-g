@@ -1,0 +1,23 @@
+schema_version: 1
+sample_size: 60
+critical_minimum: 12
+require_review_minimum: 12
+deny_minimum: 6
+stale_policy_minimum: 15
+historical_temporal_minimum: 15
+missing_evidence_minimum: 2
+conflicting_evidence_minimum: 17
+scope_restriction_minimum: 2
+adversarial_minimum: 2
+routine_minimum: 10
+development_seed: 25013
+
+stale_scenarios:
+  - v23_historical_2021
+  - v23_future_distractor
+  - v23_out_of_order
+  - v23_late_correction
+  - v23_historical_2024
+  - v23_current_version_bias
+  - v23_stale_cache
+stability_interval_seconds: 2.0
