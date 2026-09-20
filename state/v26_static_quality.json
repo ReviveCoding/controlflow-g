@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "status": "PASS",
+  "development_seed": 26015,
+  "development_manifest_sha256": "382e8679fbdaecf473d4ed1afada54c67dc32ab7a77ce24a20ec00a1950dee68",
+  "development_protocol_sha256": "c0f0671d4bdbc6da355dd5a343b20e8a145a9dd46b76106bbe1c2a3b4433509e",
+  "ruff_format_check": "PASS",
+  "ruff_check": "PASS",
+  "strict_mypy": "PASS",
+  "strict_mypy_source_files": 187,
+  "full_pytest": "PASS",
+  "pytest_passed": 240,
+  "pytest_failed": 0,
+  "pytest_basetemp": ".pytest_tmp_v26_26015_full",
+  "junit_path": "results/v26/v26_tests.xml",
+  "junit_sha256": "561df502435098e8c468a7f4c855a2d9140252221d5befa5b1daab1c81ccec9f"
+}

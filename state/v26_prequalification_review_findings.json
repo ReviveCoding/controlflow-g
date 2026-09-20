@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "status": "PRE_QUALIFICATION_CLEAR",
+  "development_seed": 26015,
+  "development_manifest_sha256": "382e8679fbdaecf473d4ed1afada54c67dc32ab7a77ce24a20ec00a1950dee68",
+  "review_mode": "three_independent_read_only_reviews_followed_by_affected_rereview",
+  "counts": {
+    "unresolved_BLOCKER": 0,
+    "unresolved_HIGH": 0
+  },
+  "findings": [
+    {
+      "id": "CORRECTNESS-1",
+      "initial_severity": "HIGH",
+      "classification": "VALID",
+      "resolution": "RESOLVED",
+      "summary": "Qualification and final generation, transition, and freeze orchestration was missing.",
+      "repair_evidence": ["scripts/v26_generate_sealed.py", "scripts/v26_transition_sealed.py", "scripts/v26_freeze.py", "scripts/v26_freeze_final.py"]
+    },
+    {
+      "id": "CORRECTNESS-2",
+      "initial_severity": "MEDIUM",
+      "classification": "VALID",
+      "resolution": "RESOLVED",
+      "summary": "Sealed failure status was labeled as a development no-go.",
+      "repair_evidence": ["scripts/v26_run.py", "src/controlflow/v26/terminal_decision.py"]
+    },
+    {
+      "id": "METHODOLOGY-1",
+      "initial_severity": "HIGH",
+      "classification": "VALID",
+      "resolution": "RESOLVED",
+      "summary": "Development identity and artifact rules were pinned to 26014.",
+      "repair_evidence": ["state/v26_development_rehearsal_26015_manifest.json", "state/v26_development_rehearsal_26015_closure_receipt.json"]
+    },
+    {
+      "id": "METHODOLOGY-2",
+      "initial_severity": "HIGH",
+      "classification": "VALID",
+      "resolution": "RESOLVED",
+      "summary": "Qualification and final failure did not permanently consume the identity as NO_PROMOTE.",
+      "repair_evidence": ["scripts/v26_run.py", "scripts/v26_generate_sealed.py", "scripts/v26_transition_sealed.py"]
+    },
+    {
+      "id": "SECURITY-1",
+      "initial_severity": "HIGH",
+      "classification": "VALID",
+      "resolution": "RESOLVED",
+      "summary": "Development protocol omitted runtime-critical executable dependencies.",
+      "repair_evidence": ["scripts/v26_prepare_development.py", "state/v26_development_rehearsal_26015_protocol.json"]
+    },
+    {
+      "id": "SECURITY-2",
+      "initial_severity": "HIGH",
+      "classification": "VALID",
+      "resolution": "RESOLVED",
+      "summary": "Approval consumption and foreign-key integrity were absent from independent SQLite closure checks.",
+      "repair_evidence": ["src/controlflow/v24/ledger_snapshot.py", "src/controlflow/v24/sqlite_finalization.py", "src/controlflow/v26/postclose.py", "state/v26_development_rehearsal_26015_postclose_verification.json"]
+    }
+  ],
+  "remaining_blocker_or_high": []
+}
