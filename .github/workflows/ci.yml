@@ -9,6 +9,8 @@ jobs:
       CONTROLFLOW_AUDIT_TRUST_DIR: ${{ github.workspace }}/state/audit_trust
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.11"
@@ -22,3 +24,4 @@ jobs:
       - run: uv run ruff check src tests
       - run: uv run mypy src
       - run: uv run pytest -q -m "not gpu and not spark and not network and not sealed"
+      - run: uv run --no-sync python scripts/verify_release_portability.py

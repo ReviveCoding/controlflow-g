@@ -1,0 +1,598 @@
+{
+  "method": "LF replaces CRLF; CRLF replaces each LF in the LF-normalized working-tree bytes; Git blob read with git show REF:path",
+  "release_commit_sha": "f21a4192373c5bcb815e12a7fa10ac8f183b482b",
+  "schema_version": 1,
+  "source_ref": "controlflow-g-v26-promote",
+  "stages": [
+    {
+      "graph": "state/v25_development_rehearsal_25013_bindings.json",
+      "identity": "v25_development_rehearsal_25013",
+      "jsonl": [
+        {
+          "expected_matches": [
+            "working_tree",
+            "deterministic_crlf"
+          ],
+          "expected_receipt": {
+            "sha256": "8009e750f8068606e5fbfd9aac40c2e498db626980db6536d848e18064003faa",
+            "size": 44791
+          },
+          "git_attributes": [
+            "artifacts/v25/development/rehearsal_25013/rehearsal.partial.jsonl: text: auto",
+            "artifacts/v25/development/rehearsal_25013/rehearsal.partial.jsonl: eol: unspecified"
+          ],
+          "index_worktree_eol": "i/lf    w/crlf  attr/text=auto        \tartifacts/v25/development/rehearsal_25013/rehearsal.partial.jsonl",
+          "lone_cr_count": 0,
+          "path": "artifacts/v25/development/rehearsal_25013/rehearsal.partial.jsonl",
+          "representations": {
+            "deterministic_crlf": {
+              "sha256": "8009e750f8068606e5fbfd9aac40c2e498db626980db6536d848e18064003faa",
+              "size": 44791
+            },
+            "deterministic_lf": {
+              "sha256": "98ca3c50e2461490b7f4c1d2f6b9d04e88726abdc58a1e73acc7ebf0091ba222",
+              "size": 44731
+            },
+            "git_blob": {
+              "sha256": "98ca3c50e2461490b7f4c1d2f6b9d04e88726abdc58a1e73acc7ebf0091ba222",
+              "size": 44731
+            },
+            "working_tree": {
+              "sha256": "8009e750f8068606e5fbfd9aac40c2e498db626980db6536d848e18064003faa",
+              "size": 44791
+            }
+          }
+        },
+        {
+          "expected_matches": [
+            "working_tree",
+            "deterministic_crlf"
+          ],
+          "expected_receipt": {
+            "sha256": "27e18ecd9146e6f6be1026e329ca696da073cb1683e1ddb4de2b75a9bbcf4995",
+            "size": 27076
+          },
+          "git_attributes": [
+            "results/v25/development/rehearsal_25013/nvidia_telemetry.json.partial.jsonl: text: auto",
+            "results/v25/development/rehearsal_25013/nvidia_telemetry.json.partial.jsonl: eol: unspecified"
+          ],
+          "index_worktree_eol": "i/lf    w/crlf  attr/text=auto        \tresults/v25/development/rehearsal_25013/nvidia_telemetry.json.partial.jsonl",
+          "lone_cr_count": 0,
+          "path": "results/v25/development/rehearsal_25013/nvidia_telemetry.json.partial.jsonl",
+          "representations": {
+            "deterministic_crlf": {
+              "sha256": "27e18ecd9146e6f6be1026e329ca696da073cb1683e1ddb4de2b75a9bbcf4995",
+              "size": 27076
+            },
+            "deterministic_lf": {
+              "sha256": "8d0fb3f0ac64858a69fc8649b085e700b83d1b377329cd81578056ca7ea65b0e",
+              "size": 27014
+            },
+            "git_blob": {
+              "sha256": "8d0fb3f0ac64858a69fc8649b085e700b83d1b377329cd81578056ca7ea65b0e",
+              "size": 27014
+            },
+            "working_tree": {
+              "sha256": "27e18ecd9146e6f6be1026e329ca696da073cb1683e1ddb4de2b75a9bbcf4995",
+              "size": 27076
+            }
+          }
+        },
+        {
+          "expected_matches": [
+            "working_tree",
+            "deterministic_crlf"
+          ],
+          "expected_receipt": {
+            "sha256": "dc54fec25b9eb37cf7b3f97e168c7935426e8652f8ef9df15644f6a8c8525c39",
+            "size": 43547
+          },
+          "git_attributes": [
+            "artifacts/v25/development/rehearsal_25013/request_diagnostics.partial.jsonl: text: auto",
+            "artifacts/v25/development/rehearsal_25013/request_diagnostics.partial.jsonl: eol: unspecified"
+          ],
+          "index_worktree_eol": "i/lf    w/crlf  attr/text=auto        \tartifacts/v25/development/rehearsal_25013/request_diagnostics.partial.jsonl",
+          "lone_cr_count": 0,
+          "path": "artifacts/v25/development/rehearsal_25013/request_diagnostics.partial.jsonl",
+          "representations": {
+            "deterministic_crlf": {
+              "sha256": "dc54fec25b9eb37cf7b3f97e168c7935426e8652f8ef9df15644f6a8c8525c39",
+              "size": 43547
+            },
+            "deterministic_lf": {
+              "sha256": "6e14e75952e1f49e0c4328191b672b160243b00e3d49daba37d9870972c6b9c2",
+              "size": 43487
+            },
+            "git_blob": {
+              "sha256": "6e14e75952e1f49e0c4328191b672b160243b00e3d49daba37d9870972c6b9c2",
+              "size": 43487
+            },
+            "working_tree": {
+              "sha256": "dc54fec25b9eb37cf7b3f97e168c7935426e8652f8ef9df15644f6a8c8525c39",
+              "size": 43547
+            }
+          }
+        },
+        {
+          "expected_matches": [
+            "working_tree",
+            "deterministic_crlf"
+          ],
+          "expected_receipt": {
+            "sha256": "ad27ef08ec942f7f3c938890cc57e910029185ca03c192b2e3f4bfa6abc23d6c",
+            "size": 29722
+          },
+          "git_attributes": [
+            "results/v25/development/rehearsal_25013/vllm_metrics_periodic.json.partial.jsonl: text: auto",
+            "results/v25/development/rehearsal_25013/vllm_metrics_periodic.json.partial.jsonl: eol: unspecified"
+          ],
+          "index_worktree_eol": "i/lf    w/crlf  attr/text=auto        \tresults/v25/development/rehearsal_25013/vllm_metrics_periodic.json.partial.jsonl",
+          "lone_cr_count": 0,
+          "path": "results/v25/development/rehearsal_25013/vllm_metrics_periodic.json.partial.jsonl",
+          "representations": {
+            "deterministic_crlf": {
+              "sha256": "ad27ef08ec942f7f3c938890cc57e910029185ca03c192b2e3f4bfa6abc23d6c",
+              "size": 29722
+            },
+            "deterministic_lf": {
+              "sha256": "8905cd4ab1a776a05e3b61a3a9ab33f452df4fc5f01091b23ffc0c2bbd506fa6",
+              "size": 29711
+            },
+            "git_blob": {
+              "sha256": "8905cd4ab1a776a05e3b61a3a9ab33f452df4fc5f01091b23ffc0c2bbd506fa6",
+              "size": 29711
+            },
+            "working_tree": {
+              "sha256": "ad27ef08ec942f7f3c938890cc57e910029185ca03c192b2e3f4bfa6abc23d6c",
+              "size": 29722
+            }
+          }
+        }
+      ],
+      "receipt": "state/v25_development_rehearsal_25013_closure_receipt.json"
+    },
+    {
+      "graph": "state/v26_development_rehearsal_26015_bindings.json",
+      "identity": "v26_development_rehearsal_26015",
+      "jsonl": [
+        {
+          "expected_matches": [
+            "working_tree",
+            "deterministic_crlf"
+          ],
+          "expected_receipt": {
+            "sha256": "970d87e119da72968bc523261154f99624029daff5aec8bb6df40f41d7166953",
+            "size": 44850
+          },
+          "git_attributes": [
+            "artifacts/v26/development/rehearsal_26015/rehearsal.partial.jsonl: text: auto",
+            "artifacts/v26/development/rehearsal_26015/rehearsal.partial.jsonl: eol: unspecified"
+          ],
+          "index_worktree_eol": "i/lf    w/crlf  attr/text=auto        \tartifacts/v26/development/rehearsal_26015/rehearsal.partial.jsonl",
+          "lone_cr_count": 0,
+          "path": "artifacts/v26/development/rehearsal_26015/rehearsal.partial.jsonl",
+          "representations": {
+            "deterministic_crlf": {
+              "sha256": "970d87e119da72968bc523261154f99624029daff5aec8bb6df40f41d7166953",
+              "size": 44850
+            },
+            "deterministic_lf": {
+              "sha256": "08b17ed697efd4e08bccbf390c47791fabbb6c99b0844218bc49b2c45842213d",
+              "size": 44790
+            },
+            "git_blob": {
+              "sha256": "08b17ed697efd4e08bccbf390c47791fabbb6c99b0844218bc49b2c45842213d",
+              "size": 44790
+            },
+            "working_tree": {
+              "sha256": "970d87e119da72968bc523261154f99624029daff5aec8bb6df40f41d7166953",
+              "size": 44850
+            }
+          }
+        },
+        {
+          "expected_matches": [
+            "working_tree",
+            "deterministic_crlf"
+          ],
+          "expected_receipt": {
+            "sha256": "a642730238e7c652ac641c68222be8d79a5eb688fbcd4c9b0769f2c085f0b135",
+            "size": 63166
+          },
+          "git_attributes": [
+            "results/v26/development/rehearsal_26015/nvidia_telemetry.json.partial.jsonl: text: auto",
+            "results/v26/development/rehearsal_26015/nvidia_telemetry.json.partial.jsonl: eol: unspecified"
+          ],
+          "index_worktree_eol": "i/lf    w/crlf  attr/text=auto        \tresults/v26/development/rehearsal_26015/nvidia_telemetry.json.partial.jsonl",
+          "lone_cr_count": 0,
+          "path": "results/v26/development/rehearsal_26015/nvidia_telemetry.json.partial.jsonl",
+          "representations": {
+            "deterministic_crlf": {
+              "sha256": "a642730238e7c652ac641c68222be8d79a5eb688fbcd4c9b0769f2c085f0b135",
+              "size": 63166
+            },
+            "deterministic_lf": {
+              "sha256": "2ae3bff06e9d59e4357d539cab7e054f2323127a770d98f83137b49f513658c4",
+              "size": 63021
+            },
+            "git_blob": {
+              "sha256": "2ae3bff06e9d59e4357d539cab7e054f2323127a770d98f83137b49f513658c4",
+              "size": 63021
+            },
+            "working_tree": {
+              "sha256": "a642730238e7c652ac641c68222be8d79a5eb688fbcd4c9b0769f2c085f0b135",
+              "size": 63166
+            }
+          }
+        },
+        {
+          "expected_matches": [
+            "working_tree",
+            "deterministic_crlf"
+          ],
+          "expected_receipt": {
+            "sha256": "58fef52b25e4918cbc429d1948c3bd0b49d5db5216fe119f56b061abecc22c58",
+            "size": 43514
+          },
+          "git_attributes": [
+            "artifacts/v26/development/rehearsal_26015/request_diagnostics.partial.jsonl: text: auto",
+            "artifacts/v26/development/rehearsal_26015/request_diagnostics.partial.jsonl: eol: unspecified"
+          ],
+          "index_worktree_eol": "i/lf    w/crlf  attr/text=auto        \tartifacts/v26/development/rehearsal_26015/request_diagnostics.partial.jsonl",
+          "lone_cr_count": 0,
+          "path": "artifacts/v26/development/rehearsal_26015/request_diagnostics.partial.jsonl",
+          "representations": {
+            "deterministic_crlf": {
+              "sha256": "58fef52b25e4918cbc429d1948c3bd0b49d5db5216fe119f56b061abecc22c58",
+              "size": 43514
+            },
+            "deterministic_lf": {
+              "sha256": "740d8ffc1225da2906ccee73c551cf46acea921cdf1e893e886d319c50dcd229",
+              "size": 43454
+            },
+            "git_blob": {
+              "sha256": "740d8ffc1225da2906ccee73c551cf46acea921cdf1e893e886d319c50dcd229",
+              "size": 43454
+            },
+            "working_tree": {
+              "sha256": "58fef52b25e4918cbc429d1948c3bd0b49d5db5216fe119f56b061abecc22c58",
+              "size": 43514
+            }
+          }
+        },
+        {
+          "expected_matches": [
+            "working_tree",
+            "deterministic_crlf"
+          ],
+          "expected_receipt": {
+            "sha256": "002fac1a750b34b25d1e0007a15b2b79098f82e6faf36616f9ff6a7ecdfb96b1",
+            "size": 56588
+          },
+          "git_attributes": [
+            "results/v26/development/rehearsal_26015/vllm_metrics_periodic.json.partial.jsonl: text: auto",
+            "results/v26/development/rehearsal_26015/vllm_metrics_periodic.json.partial.jsonl: eol: unspecified"
+          ],
+          "index_worktree_eol": "i/lf    w/crlf  attr/text=auto        \tresults/v26/development/rehearsal_26015/vllm_metrics_periodic.json.partial.jsonl",
+          "lone_cr_count": 0,
+          "path": "results/v26/development/rehearsal_26015/vllm_metrics_periodic.json.partial.jsonl",
+          "representations": {
+            "deterministic_crlf": {
+              "sha256": "002fac1a750b34b25d1e0007a15b2b79098f82e6faf36616f9ff6a7ecdfb96b1",
+              "size": 56588
+            },
+            "deterministic_lf": {
+              "sha256": "86b6272fd5fd168ed432c1dd482267075fe81eaeb2bf0ca388af4d95b11f6e1b",
+              "size": 56567
+            },
+            "git_blob": {
+              "sha256": "86b6272fd5fd168ed432c1dd482267075fe81eaeb2bf0ca388af4d95b11f6e1b",
+              "size": 56567
+            },
+            "working_tree": {
+              "sha256": "002fac1a750b34b25d1e0007a15b2b79098f82e6faf36616f9ff6a7ecdfb96b1",
+              "size": 56588
+            }
+          }
+        }
+      ],
+      "receipt": "state/v26_development_rehearsal_26015_closure_receipt.json"
+    },
+    {
+      "graph": "state/v26_qualification_bindings.json",
+      "identity": "v26_qualification",
+      "jsonl": [
+        {
+          "expected_matches": [
+            "working_tree",
+            "deterministic_crlf"
+          ],
+          "expected_receipt": {
+            "sha256": "a0ebfd391efc08553e9e336f31a88f4031afc0fdd612d534d10ce6f59a3e3fb3",
+            "size": 444924
+          },
+          "git_attributes": [
+            "artifacts/v26/qualification/qualification.partial.jsonl: text: auto",
+            "artifacts/v26/qualification/qualification.partial.jsonl: eol: unspecified"
+          ],
+          "index_worktree_eol": "i/lf    w/crlf  attr/text=auto        \tartifacts/v26/qualification/qualification.partial.jsonl",
+          "lone_cr_count": 0,
+          "path": "artifacts/v26/qualification/qualification.partial.jsonl",
+          "representations": {
+            "deterministic_crlf": {
+              "sha256": "a0ebfd391efc08553e9e336f31a88f4031afc0fdd612d534d10ce6f59a3e3fb3",
+              "size": 444924
+            },
+            "deterministic_lf": {
+              "sha256": "440422e95ade2c5e5c068b72c25b8b4552f72cbc82afd7e90c2b7d7c0feb409b",
+              "size": 444324
+            },
+            "git_blob": {
+              "sha256": "440422e95ade2c5e5c068b72c25b8b4552f72cbc82afd7e90c2b7d7c0feb409b",
+              "size": 444324
+            },
+            "working_tree": {
+              "sha256": "a0ebfd391efc08553e9e336f31a88f4031afc0fdd612d534d10ce6f59a3e3fb3",
+              "size": 444924
+            }
+          }
+        },
+        {
+          "expected_matches": [
+            "working_tree",
+            "deterministic_crlf"
+          ],
+          "expected_receipt": {
+            "sha256": "a550cae694d5cb5242c4d40d9e83258f71ff4fdfa430149c05c9162720e5d10b",
+            "size": 455924
+          },
+          "git_attributes": [
+            "results/v26/qualification/nvidia_telemetry.json.partial.jsonl: text: auto",
+            "results/v26/qualification/nvidia_telemetry.json.partial.jsonl: eol: unspecified"
+          ],
+          "index_worktree_eol": "i/lf    w/crlf  attr/text=auto        \tresults/v26/qualification/nvidia_telemetry.json.partial.jsonl",
+          "lone_cr_count": 0,
+          "path": "results/v26/qualification/nvidia_telemetry.json.partial.jsonl",
+          "representations": {
+            "deterministic_crlf": {
+              "sha256": "a550cae694d5cb5242c4d40d9e83258f71ff4fdfa430149c05c9162720e5d10b",
+              "size": 455924
+            },
+            "deterministic_lf": {
+              "sha256": "5c58a0ad12474b908e8bc15924044277e5abb5fa88e9bf8800f4f2a79740eee1",
+              "size": 454878
+            },
+            "git_blob": {
+              "sha256": "5c58a0ad12474b908e8bc15924044277e5abb5fa88e9bf8800f4f2a79740eee1",
+              "size": 454878
+            },
+            "working_tree": {
+              "sha256": "a550cae694d5cb5242c4d40d9e83258f71ff4fdfa430149c05c9162720e5d10b",
+              "size": 455924
+            }
+          }
+        },
+        {
+          "expected_matches": [
+            "working_tree",
+            "deterministic_crlf"
+          ],
+          "expected_receipt": {
+            "sha256": "eaa60731ee2622b058c7d7ffdaa9e400fee7134f92e7eaf2940cefc37550ad43",
+            "size": 433116
+          },
+          "git_attributes": [
+            "artifacts/v26/qualification/request_diagnostics.partial.jsonl: text: auto",
+            "artifacts/v26/qualification/request_diagnostics.partial.jsonl: eol: unspecified"
+          ],
+          "index_worktree_eol": "i/lf    w/crlf  attr/text=auto        \tartifacts/v26/qualification/request_diagnostics.partial.jsonl",
+          "lone_cr_count": 0,
+          "path": "artifacts/v26/qualification/request_diagnostics.partial.jsonl",
+          "representations": {
+            "deterministic_crlf": {
+              "sha256": "eaa60731ee2622b058c7d7ffdaa9e400fee7134f92e7eaf2940cefc37550ad43",
+              "size": 433116
+            },
+            "deterministic_lf": {
+              "sha256": "7513a911ff2f072109eeda47553e25e9fa27591b659207e9abbf26d3a81a64fc",
+              "size": 432516
+            },
+            "git_blob": {
+              "sha256": "7513a911ff2f072109eeda47553e25e9fa27591b659207e9abbf26d3a81a64fc",
+              "size": 432516
+            },
+            "working_tree": {
+              "sha256": "eaa60731ee2622b058c7d7ffdaa9e400fee7134f92e7eaf2940cefc37550ad43",
+              "size": 433116
+            }
+          }
+        },
+        {
+          "expected_matches": [
+            "working_tree",
+            "deterministic_crlf"
+          ],
+          "expected_receipt": {
+            "sha256": "0724d550d34e086c8ef6f32ff1ceb7fce1e4cb362cd8587b2f4196c81588b689",
+            "size": 560079
+          },
+          "git_attributes": [
+            "results/v26/qualification/vllm_metrics_periodic.json.partial.jsonl: text: auto",
+            "results/v26/qualification/vllm_metrics_periodic.json.partial.jsonl: eol: unspecified"
+          ],
+          "index_worktree_eol": "i/lf    w/crlf  attr/text=auto        \tresults/v26/qualification/vllm_metrics_periodic.json.partial.jsonl",
+          "lone_cr_count": 0,
+          "path": "results/v26/qualification/vllm_metrics_periodic.json.partial.jsonl",
+          "representations": {
+            "deterministic_crlf": {
+              "sha256": "0724d550d34e086c8ef6f32ff1ceb7fce1e4cb362cd8587b2f4196c81588b689",
+              "size": 560079
+            },
+            "deterministic_lf": {
+              "sha256": "4e5964093a2b48483c26993f958cb8421915214206032e8ed7a952f0b49e9cda",
+              "size": 559872
+            },
+            "git_blob": {
+              "sha256": "4e5964093a2b48483c26993f958cb8421915214206032e8ed7a952f0b49e9cda",
+              "size": 559872
+            },
+            "working_tree": {
+              "sha256": "0724d550d34e086c8ef6f32ff1ceb7fce1e4cb362cd8587b2f4196c81588b689",
+              "size": 560079
+            }
+          }
+        }
+      ],
+      "receipt": "state/v26_qualification_closure_receipt.json"
+    },
+    {
+      "graph": "state/v26_final_bindings.json",
+      "identity": "v26_final",
+      "jsonl": [
+        {
+          "expected_matches": [
+            "working_tree",
+            "deterministic_crlf"
+          ],
+          "expected_receipt": {
+            "sha256": "1dfbbb28cd585798d7b6e864bbd388f3f942477ae41cc83e562223c32136d797",
+            "size": 445036
+          },
+          "git_attributes": [
+            "artifacts/v26/final/final.partial.jsonl: text: auto",
+            "artifacts/v26/final/final.partial.jsonl: eol: unspecified"
+          ],
+          "index_worktree_eol": "i/lf    w/crlf  attr/text=auto        \tartifacts/v26/final/final.partial.jsonl",
+          "lone_cr_count": 0,
+          "path": "artifacts/v26/final/final.partial.jsonl",
+          "representations": {
+            "deterministic_crlf": {
+              "sha256": "1dfbbb28cd585798d7b6e864bbd388f3f942477ae41cc83e562223c32136d797",
+              "size": 445036
+            },
+            "deterministic_lf": {
+              "sha256": "c582f945f5bf3f4cdaa9778681b4f8ae60e570f3678d6f9b1b491cb661f5b4c8",
+              "size": 444436
+            },
+            "git_blob": {
+              "sha256": "c582f945f5bf3f4cdaa9778681b4f8ae60e570f3678d6f9b1b491cb661f5b4c8",
+              "size": 444436
+            },
+            "working_tree": {
+              "sha256": "1dfbbb28cd585798d7b6e864bbd388f3f942477ae41cc83e562223c32136d797",
+              "size": 445036
+            }
+          }
+        },
+        {
+          "expected_matches": [
+            "working_tree",
+            "deterministic_crlf"
+          ],
+          "expected_receipt": {
+            "sha256": "a14819feaa12fbbe61f0dce9c06e6283b48bb8a25852f4322b11a43d258d4799",
+            "size": 518585
+          },
+          "git_attributes": [
+            "results/v26/final/nvidia_telemetry.json.partial.jsonl: text: auto",
+            "results/v26/final/nvidia_telemetry.json.partial.jsonl: eol: unspecified"
+          ],
+          "index_worktree_eol": "i/lf    w/crlf  attr/text=auto        \tresults/v26/final/nvidia_telemetry.json.partial.jsonl",
+          "lone_cr_count": 0,
+          "path": "results/v26/final/nvidia_telemetry.json.partial.jsonl",
+          "representations": {
+            "deterministic_crlf": {
+              "sha256": "a14819feaa12fbbe61f0dce9c06e6283b48bb8a25852f4322b11a43d258d4799",
+              "size": 518585
+            },
+            "deterministic_lf": {
+              "sha256": "60ad9a6a44538e552ee7b751f40ba15e30e0b819b8e7185beba65f4731787439",
+              "size": 517395
+            },
+            "git_blob": {
+              "sha256": "60ad9a6a44538e552ee7b751f40ba15e30e0b819b8e7185beba65f4731787439",
+              "size": 517395
+            },
+            "working_tree": {
+              "sha256": "a14819feaa12fbbe61f0dce9c06e6283b48bb8a25852f4322b11a43d258d4799",
+              "size": 518585
+            }
+          }
+        },
+        {
+          "expected_matches": [
+            "working_tree",
+            "deterministic_crlf"
+          ],
+          "expected_receipt": {
+            "sha256": "2d01a582af214e97d21fe25db566735568725a12964be02bc5d7f81c913c0e65",
+            "size": 433669
+          },
+          "git_attributes": [
+            "artifacts/v26/final/request_diagnostics.partial.jsonl: text: auto",
+            "artifacts/v26/final/request_diagnostics.partial.jsonl: eol: unspecified"
+          ],
+          "index_worktree_eol": "i/lf    w/crlf  attr/text=auto        \tartifacts/v26/final/request_diagnostics.partial.jsonl",
+          "lone_cr_count": 0,
+          "path": "artifacts/v26/final/request_diagnostics.partial.jsonl",
+          "representations": {
+            "deterministic_crlf": {
+              "sha256": "2d01a582af214e97d21fe25db566735568725a12964be02bc5d7f81c913c0e65",
+              "size": 433669
+            },
+            "deterministic_lf": {
+              "sha256": "d52413b5b0d6e75706d570261c30d7f624d4ab7a7f0af0721cea4b85d22ae494",
+              "size": 433069
+            },
+            "git_blob": {
+              "sha256": "d52413b5b0d6e75706d570261c30d7f624d4ab7a7f0af0721cea4b85d22ae494",
+              "size": 433069
+            },
+            "working_tree": {
+              "sha256": "2d01a582af214e97d21fe25db566735568725a12964be02bc5d7f81c913c0e65",
+              "size": 433669
+            }
+          }
+        },
+        {
+          "expected_matches": [
+            "working_tree",
+            "deterministic_crlf"
+          ],
+          "expected_receipt": {
+            "sha256": "02f0174a348667d3249d4598cb1e6079cc2f6173ed05f72b51884979a0241fb9",
+            "size": 576462
+          },
+          "git_attributes": [
+            "results/v26/final/vllm_metrics_periodic.json.partial.jsonl: text: auto",
+            "results/v26/final/vllm_metrics_periodic.json.partial.jsonl: eol: unspecified"
+          ],
+          "index_worktree_eol": "i/lf    w/crlf  attr/text=auto        \tresults/v26/final/vllm_metrics_periodic.json.partial.jsonl",
+          "lone_cr_count": 0,
+          "path": "results/v26/final/vllm_metrics_periodic.json.partial.jsonl",
+          "representations": {
+            "deterministic_crlf": {
+              "sha256": "02f0174a348667d3249d4598cb1e6079cc2f6173ed05f72b51884979a0241fb9",
+              "size": 576462
+            },
+            "deterministic_lf": {
+              "sha256": "70fbe610380a1d43578003533d108b64c273c8a717e6d08705334712fa093565",
+              "size": 576249
+            },
+            "git_blob": {
+              "sha256": "70fbe610380a1d43578003533d108b64c273c8a717e6d08705334712fa093565",
+              "size": 576249
+            },
+            "working_tree": {
+              "sha256": "02f0174a348667d3249d4598cb1e6079cc2f6173ed05f72b51884979a0241fb9",
+              "size": 576462
+            }
+          }
+        }
+      ],
+      "receipt": "state/v26_final_closure_receipt.json"
+    }
+  ],
+  "tag_object_sha": "5285d3e29d831597bdaac114ee9ce31d53fd12a3",
+  "working_tree_context": "Windows linked worktree; core.autocrlf=true"
+}

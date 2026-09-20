@@ -4,6 +4,8 @@ import time
 from pathlib import Path
 
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from controlflow.v23.integrity import load_frozen_approval_issuer
 from controlflow.v23.latency import (
@@ -60,12 +62,30 @@ def test_request_diagnostics_are_durable_and_reloadable(tmp_path: Path) -> None:
     assert path.read_text(encoding="utf-8") == ""
 
 
-def test_development_benchmark_loads_frozen_signer_without_writing(monkeypatch: pytest.MonkeyPatch) -> None:
-    root = Path(__file__).resolve().parents[2]
+def test_development_benchmark_loads_frozen_signer_without_writing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path
     from controlflow.v22.approval import ApprovalIssuer
 
     private_path = root / "artifacts/v22/local_keys/approval_ed25519.private.pem"
     public_path = root / "artifacts/v22/approval_public_key.pem"
+    private_path.parent.mkdir(parents=True)
+    public_path.parent.mkdir(parents=True, exist_ok=True)
+    private_key = Ed25519PrivateKey.generate()
+    private_path.write_bytes(
+        private_key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+    public_path.write_bytes(
+        private_key.public_key().public_bytes(
+            serialization.Encoding.PEM,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+    )
     before = (private_path.read_bytes(), public_path.read_bytes())
 
     def prohibited(*args: object, **kwargs: object) -> object:

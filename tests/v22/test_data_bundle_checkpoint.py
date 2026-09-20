@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+import yaml
 
 from controlflow.core.state import atomic_write_json, canonical_json, sha256_file
 from controlflow.v22.bundle import verify_bundle, write_bundle
@@ -40,16 +41,60 @@ def test_latent_truth_is_physically_absent_from_runtime_and_splits_are_independe
 
 
 def test_prior_runtime_manifest_covers_historical_and_development_runtime_data() -> None:
-    paths = resolve_prior_runtime_paths(
-        Path(__file__).resolve().parents[2],
-        Path(__file__).resolve().parents[2] / "configs/v26/prior_runtime_manifest.yaml",
-        excluded_directory=Path(__file__).resolve().parents[2] / "data/v22/qualification/V22QUAL",
+    manifest = yaml.safe_load(
+        (Path(__file__).resolve().parents[2] / "configs/v26/prior_runtime_manifest.yaml").read_text(encoding="utf-8")
     )
-    relative = {path.relative_to(Path(__file__).resolve().parents[2]).as_posix() for path in paths}
-    assert "data/v2/development/cases.parquet" in relative
-    assert "data/v2/internal_eligibility_r4/runtime.parquet" in relative
-    assert "data/v21/development/cases/runtime_cases.parquet" in relative
-    assert "data/v22/development_r20/validation/runtime_cases.parquet" in relative
+    assert {
+        "data/v2/development/cases.parquet",
+        "data/v2/internal_eligibility*/runtime.parquet",
+        "data/v21/**/runtime_cases.parquet",
+        "data/v22/**/runtime_cases.parquet",
+        "data/v23/**/runtime_cases.parquet",
+        "data/v24/development/**/runtime_cases.parquet",
+        "data/v24/qualification/**/runtime_cases.parquet",
+        "data/v25/development/**/runtime_cases.parquet",
+        "data/v25/qualification/**/runtime_cases.parquet",
+        "data/v25/final/**/runtime_cases.parquet",
+        "data/v26/development/**/runtime_cases.parquet",
+        "data/v26/qualification/**/runtime_cases.parquet",
+        "data/v26/final/**/runtime_cases.parquet",
+    } <= set(manifest["runtime_patterns"])
+    assert {"cases.parquet", "runtime.parquet", "runtime_cases.parquet"} <= set(
+        manifest["recognized_runtime_filenames"]
+    )
+
+
+def test_prior_runtime_resolver_uses_existing_files_and_excludes_holdout(tmp_path: Path) -> None:
+    present = {
+        "data/v2/development/cases.parquet",
+        "data/v2/internal_eligibility_r4/runtime.parquet",
+        "data/v21/development/cases/runtime_cases.parquet",
+        "data/v22/development_r20/validation/runtime_cases.parquet",
+        "data/v26/final/V26FINAL/runtime_cases.parquet",
+    }
+    excluded = "data/v22/qualification/V22QUAL/runtime_cases.parquet"
+    for relative in present | {excluded, "data/v26/final/V26FINAL/other.parquet"}:
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"synthetic runtime fixture")
+
+    manifest_path = Path(__file__).resolve().parents[2] / "configs/v26/prior_runtime_manifest.yaml"
+    resolved = resolve_prior_runtime_paths(
+        tmp_path,
+        manifest_path,
+        excluded_directory=tmp_path / "data/v22/qualification/V22QUAL",
+    )
+    assert {path.relative_to(tmp_path).as_posix() for path in resolved} == present
+
+    unexpected = tmp_path / "data/unlisted/runtime_cases.parquet"
+    unexpected.parent.mkdir(parents=True)
+    unexpected.write_bytes(b"synthetic unlisted runtime")
+    with pytest.raises(RuntimeError, match="PRIOR_RUNTIME_MANIFEST_INCOMPLETE"):
+        resolve_prior_runtime_paths(
+            tmp_path,
+            manifest_path,
+            excluded_directory=tmp_path / "data/v22/qualification/V22QUAL",
+        )
 
 
 def test_qualification_defers_truth_bytes_until_candidate_output_closes() -> None:

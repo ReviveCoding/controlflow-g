@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime
+from pathlib import Path
 
 import joblib
 import numpy as np
 import pandas as pd
 import pytest
+from sklearn.dummy import DummyClassifier
 
+from controlflow.core.state import ProjectPaths
 from controlflow.schemas import AuthorizationOutcome, Disposition, Severity
 from controlflow.v2.critical import select_operating_point
 from controlflow.v2.data import load_v2_split
@@ -217,11 +221,32 @@ def test_temporal_retrieval_rejects_stale_policy_version() -> None:
     assert "12CFR-21:policy-v2" not in ids
 
 
-def test_root_embedding_runtime_supports_unseen_case_ids() -> None:
+def test_root_embedding_runtime_supports_unseen_case_ids(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    paths = ProjectPaths(tmp_path)
+    monkeypatch.setattr(ProjectPaths, "discover", lambda: paths)
+    model_dir = tmp_path / "artifacts/v2/models"
+    model_dir.mkdir(parents=True)
+    joblib.dump(
+        {
+            "case_ids": ["CACHED-ONLY"],
+            "narrative_sha256": [hashlib.sha256(b"cached narrative").hexdigest()],
+            "embeddings": np.zeros((1, 2)),
+        },
+        tmp_path / "artifacts/v2/root_embeddings.joblib",
+    )
+    model = DummyClassifier(strategy="most_frequent").fit(np.zeros((1, 2)), ["ROUTINE_VARIANCE"])
+    joblib.dump({"model": model, "model_name": "dummy"}, model_dir / "root_embedding_selected.joblib")
+
     frame = pd.DataFrame({"case_id": ["NEVER-SEEN"], "narrative": ["routine operational variance"]})
-    dimensions = joblib.load("artifacts/v2/root_embeddings.joblib")["embeddings"].shape[1]
-    prediction = predict_root_causes_runtime(frame, encode_unseen=lambda values: np.ones((len(values), dimensions)))
-    assert len(prediction) == 1
+    encoded: list[list[str]] = []
+
+    def encode_unseen(values: list[str]) -> np.ndarray:
+        encoded.append(values)
+        return np.ones((len(values), 2))
+
+    prediction = predict_root_causes_runtime(frame, encode_unseen=encode_unseen)
+    assert encoded == [["routine operational variance"]]
+    assert prediction.tolist() == ["ROUTINE_VARIANCE"]
 
 
 def test_typed_assembly_recovers_from_bad_llm_evidence_and_rationale() -> None:

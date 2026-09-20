@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
-import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +17,36 @@ IDENTITY = "development_rehearsal_25013"
 
 def _json(relative: str) -> dict[str, Any]:
     return json.loads((ROOT / relative).read_text(encoding="utf-8"))
+
+
+def _reconstructed_rehearsal_root(tmp_path: Path) -> Path:
+    """Restore the original CRLF-bound JSONL bytes without changing frozen files."""
+    root = tmp_path / "historical_rehearsal"
+    graph_name = f"state/v25_{IDENTITY}_bindings.json"
+    receipt_name = f"state/v25_{IDENTITY}_closure_receipt.json"
+    graph = _json(graph_name)
+    receipt = _json(receipt_name)
+    bound = {row["path"]: row for row in graph["bindings"].values()}
+    names = {
+        graph_name,
+        receipt_name,
+        f"state/v25_{IDENTITY}_manifest.json",
+        f"state/v25_{IDENTITY}_manifest.proposed.json",
+        f"state/v25_{IDENTITY}_terminal_anchor.json",
+        graph["rules"]["path"],
+        *(row["path"] for row in graph["bindings"].values()),
+        *(row["path"] for row in receipt["deferred_bindings"]),
+    }
+    for name in sorted(names):
+        content = (ROOT / name).read_bytes()
+        if name.endswith(".jsonl") and name in bound:
+            content = content.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+            assert hashlib.sha256(content).hexdigest() == bound[name]["sha256"]
+            assert len(content) == bound[name]["size"]
+        target = root / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+    return root
 
 
 def test_real_workflow_checkpoint_loads_all_required_accessors() -> None:
@@ -50,32 +80,33 @@ def test_stale_policy_metric_matches_independent_denominator() -> None:
     assert aggregate[stale]["numerator"] == independent["ratios"][stale]["numerator"]
 
 
-def test_terminal_verifier_detects_mutated_manifest() -> None:
-    graph = ROOT / f"state/v25_{IDENTITY}_bindings.json"
-    receipt = ROOT / f"state/v25_{IDENTITY}_closure_receipt.json"
-    proposed = ROOT / f"state/v25_{IDENTITY}_manifest.proposed.json"
-    anchor = ROOT / f"state/v25_{IDENTITY}_terminal_anchor.json"
-    assert verify_receipt(ROOT, graph, receipt)["status"] == "PASS"
-    assert verify_terminal(ROOT, graph, receipt, proposed, anchor, after=True)["status"] == "PASS"
-    with tempfile.TemporaryDirectory(prefix="v25_terminal_test_", dir=ROOT) as directory:
-        altered = Path(directory) / "altered_proposed.json"
-        payload = json.loads(proposed.read_text(encoding="utf-8"))
-        payload["actual_maximum_llm_concurrency"] = 1
-        altered.write_text(json.dumps(payload), encoding="utf-8")
-        altered_anchor = Path(directory) / "altered_anchor.json"
-        create_anchor(ROOT, receipt, altered, altered_anchor)
-        result = verify_terminal(ROOT, graph, receipt, altered, altered_anchor, after=True)
-        assert "terminal_manifest_mutated" in result["failures"]
+def test_terminal_verifier_detects_mutated_manifest(tmp_path: Path) -> None:
+    root = _reconstructed_rehearsal_root(tmp_path)
+    graph = root / f"state/v25_{IDENTITY}_bindings.json"
+    receipt = root / f"state/v25_{IDENTITY}_closure_receipt.json"
+    proposed = root / f"state/v25_{IDENTITY}_manifest.proposed.json"
+    anchor = root / f"state/v25_{IDENTITY}_terminal_anchor.json"
+    assert verify_receipt(root, graph, receipt)["status"] == "PASS"
+    assert verify_terminal(root, graph, receipt, proposed, anchor, after=True)["status"] == "PASS"
+    altered = root / "altered_proposed.json"
+    payload = json.loads(proposed.read_text(encoding="utf-8"))
+    payload["actual_maximum_llm_concurrency"] = 1
+    altered.write_text(json.dumps(payload), encoding="utf-8")
+    altered_anchor = root / "altered_anchor.json"
+    create_anchor(root, receipt, altered, altered_anchor)
+    result = verify_terminal(root, graph, receipt, altered, altered_anchor, after=True)
+    assert "terminal_manifest_mutated" in result["failures"]
 
 
-def test_unbound_substantive_state_artifact_is_rejected() -> None:
-    graph = ROOT / f"state/v25_{IDENTITY}_bindings.json"
-    receipt = ROOT / f"state/v25_{IDENTITY}_closure_receipt.json"
-    extra = ROOT / f"state/v25_{IDENTITY}_unbound_test.json"
+def test_unbound_substantive_state_artifact_is_rejected(tmp_path: Path) -> None:
+    root = _reconstructed_rehearsal_root(tmp_path)
+    graph = root / f"state/v25_{IDENTITY}_bindings.json"
+    receipt = root / f"state/v25_{IDENTITY}_closure_receipt.json"
+    extra = root / f"state/v25_{IDENTITY}_unbound_test.json"
     assert not extra.exists()
     try:
         extra.write_text('{"synthetic_test":true}', encoding="utf-8")
-        result = verify_receipt(ROOT, graph, receipt)
+        result = verify_receipt(root, graph, receipt)
         assert any("unbound_substantive_state" in failure for failure in result["failures"])
     finally:
         extra.unlink(missing_ok=True)

@@ -1,0 +1,1006 @@
+{
+  "bound_file_count": 311,
+  "freeze_manifest_path": "state/v26_final_freeze_manifest.json",
+  "freeze_manifest_sha256": "094819b8d241587a8a2d9af706e1775a8deefaf201e1743aad79a5c06ed81b1e",
+  "release_commit_sha": "f21a4192373c5bcb815e12a7fa10ac8f183b482b",
+  "schema_version": 1,
+  "scope": "Final freeze manifest and V2.6 development, qualification, and final receipt binding graphs",
+  "source_ref": "controlflow-g-v26-promote",
+  "tag_object_sha": "5285d3e29d831597bdaac114ee9ce31d53fd12a3",
+  "transforms": [
+    {
+      "frozen_sha256": "970d87e119da72968bc523261154f99624029daff5aec8bb6df40f41d7166953",
+      "frozen_size": 44850,
+      "git_blob_sha256": "08b17ed697efd4e08bccbf390c47791fabbb6c99b0844218bc49b2c45842213d",
+      "git_blob_size": 44790,
+      "mode": "all_crlf",
+      "newline_count": 60,
+      "path": "artifacts/v26/development/rehearsal_26015/rehearsal.partial.jsonl"
+    },
+    {
+      "frozen_sha256": "58fef52b25e4918cbc429d1948c3bd0b49d5db5216fe119f56b061abecc22c58",
+      "frozen_size": 43514,
+      "git_blob_sha256": "740d8ffc1225da2906ccee73c551cf46acea921cdf1e893e886d319c50dcd229",
+      "git_blob_size": 43454,
+      "mode": "all_crlf",
+      "newline_count": 60,
+      "path": "artifacts/v26/development/rehearsal_26015/request_diagnostics.partial.jsonl"
+    },
+    {
+      "frozen_sha256": "1dfbbb28cd585798d7b6e864bbd388f3f942477ae41cc83e562223c32136d797",
+      "frozen_size": 445036,
+      "git_blob_sha256": "c582f945f5bf3f4cdaa9778681b4f8ae60e570f3678d6f9b1b491cb661f5b4c8",
+      "git_blob_size": 444436,
+      "mode": "all_crlf",
+      "newline_count": 600,
+      "path": "artifacts/v26/final/final.partial.jsonl"
+    },
+    {
+      "frozen_sha256": "2d01a582af214e97d21fe25db566735568725a12964be02bc5d7f81c913c0e65",
+      "frozen_size": 433669,
+      "git_blob_sha256": "d52413b5b0d6e75706d570261c30d7f624d4ab7a7f0af0721cea4b85d22ae494",
+      "git_blob_size": 433069,
+      "mode": "all_crlf",
+      "newline_count": 600,
+      "path": "artifacts/v26/final/request_diagnostics.partial.jsonl"
+    },
+    {
+      "frozen_sha256": "a0ebfd391efc08553e9e336f31a88f4031afc0fdd612d534d10ce6f59a3e3fb3",
+      "frozen_size": 444924,
+      "git_blob_sha256": "440422e95ade2c5e5c068b72c25b8b4552f72cbc82afd7e90c2b7d7c0feb409b",
+      "git_blob_size": 444324,
+      "mode": "all_crlf",
+      "newline_count": 600,
+      "path": "artifacts/v26/qualification/qualification.partial.jsonl"
+    },
+    {
+      "frozen_sha256": "eaa60731ee2622b058c7d7ffdaa9e400fee7134f92e7eaf2940cefc37550ad43",
+      "frozen_size": 433116,
+      "git_blob_sha256": "7513a911ff2f072109eeda47553e25e9fa27591b659207e9abbf26d3a81a64fc",
+      "git_blob_size": 432516,
+      "mode": "all_crlf",
+      "newline_count": 600,
+      "path": "artifacts/v26/qualification/request_diagnostics.partial.jsonl"
+    },
+    {
+      "frozen_sha256": "f7dbda88926061b116aacd8ad6d4cb6d4f0b1a005834921dd9bee0a7b1a2c205",
+      "frozen_size": 1213,
+      "git_blob_sha256": "7e00288da061fd7c418d04b19bc5cc866047f70dbc0dac6a07cfce0f874281be",
+      "git_blob_size": 1185,
+      "mode": "all_crlf",
+      "newline_count": 28,
+      "path": "configs/data/sources.yaml"
+    },
+    {
+      "frozen_sha256": "8d42d367c4fde8822ffc2caf1155bf8dbd07274126ceb52c8d001e8a7086f59f",
+      "frozen_size": 989,
+      "git_blob_sha256": "9db9eb0381c29c29b69de246cd58e7d48943b88da96ff7cd1c53a3a490ebd927",
+      "git_blob_size": 951,
+      "mode": "all_crlf",
+      "newline_count": 38,
+      "path": "configs/release_gates.yaml"
+    },
+    {
+      "frozen_sha256": "52989aa4ee83329834d07491261651231ceaaa33f1c03d4095be5df81671aa42",
+      "frozen_size": 1181,
+      "git_blob_sha256": "9f0a173c01f75e801c8fbba683ec6bca304b2d0071457d632bc954138439c977",
+      "git_blob_size": 1136,
+      "mode": "all_crlf",
+      "newline_count": 45,
+      "path": "configs/resource_budget.yaml"
+    },
+    {
+      "frozen_sha256": "776281f1a9cd35ff7096d845f11116701c0a3bd4861119905d960b78e96e8aee",
+      "frozen_size": 628,
+      "git_blob_sha256": "061f76feab4663d84ae410586bdabb9e495bc00181433bfa22d1fa7e1492bcbe",
+      "git_blob_size": 619,
+      "mode": "all_crlf",
+      "newline_count": 9,
+      "path": "configs/schemas/public_sources.yaml"
+    },
+    {
+      "crlf_line_ranges": [
+        [
+          0,
+          1
+        ],
+        [
+          5,
+          14
+        ],
+        [
+          16,
+          18
+        ],
+        [
+          23,
+          23
+        ],
+        [
+          28,
+          47
+        ],
+        [
+          49,
+          57
+        ]
+      ],
+      "frozen_sha256": "fc4215802510ef299aa18b6c3c8f35f467901f02719b1f33da1930a2568e695b",
+      "frozen_size": 2119,
+      "git_blob_sha256": "24bfa330a4fab24bf0bc6f0a0c33803670de1b7a0be5aa7ac4378f4a82c8750c",
+      "git_blob_size": 2074,
+      "mode": "selected_crlf",
+      "newline_count": 58,
+      "path": "configs/v26/artifact_rules.yaml"
+    },
+    {
+      "frozen_sha256": "bbb5578ad90c9c8ead25c17c8c25e75080f4273bcf75ac26c57e54d43627ff6b",
+      "frozen_size": 792,
+      "git_blob_sha256": "dec7e48fb2254248e9a798d62f804a5f14f8cc626d8e2306d8518ee85836f43d",
+      "git_blob_size": 772,
+      "mode": "all_crlf",
+      "newline_count": 20,
+      "path": "configs/v26/prior_runtime_manifest.yaml"
+    },
+    {
+      "frozen_sha256": "75f5c63b97bdc37c621eadaef3c3ebf6491d457915eb86304aa4acffcc7505de",
+      "frozen_size": 553,
+      "git_blob_sha256": "a47b5815e4a25fad50b2c157dba2b4b43a9c59702196ee8c1ac548ee63d181fa",
+      "git_blob_size": 530,
+      "mode": "all_crlf",
+      "newline_count": 23,
+      "path": "configs/v26/rehearsal_strata.yaml"
+    },
+    {
+      "frozen_sha256": "bc4151cb3178df258072260298d813b9b34752125c8d577705a792ae892062fd",
+      "frozen_size": 583,
+      "git_blob_sha256": "3cba0752299ccddc5c59f1e80b9e9a03a29cbcffca8c4b1d85a9689e08387b37",
+      "git_blob_size": 560,
+      "mode": "all_crlf",
+      "newline_count": 23,
+      "path": "configs/v26/strata.yaml"
+    },
+    {
+      "frozen_sha256": "a642730238e7c652ac641c68222be8d79a5eb688fbcd4c9b0769f2c085f0b135",
+      "frozen_size": 63166,
+      "git_blob_sha256": "2ae3bff06e9d59e4357d539cab7e054f2323127a770d98f83137b49f513658c4",
+      "git_blob_size": 63021,
+      "mode": "all_crlf",
+      "newline_count": 145,
+      "path": "results/v26/development/rehearsal_26015/nvidia_telemetry.json.partial.jsonl"
+    },
+    {
+      "frozen_sha256": "002fac1a750b34b25d1e0007a15b2b79098f82e6faf36616f9ff6a7ecdfb96b1",
+      "frozen_size": 56588,
+      "git_blob_sha256": "86b6272fd5fd168ed432c1dd482267075fe81eaeb2bf0ca388af4d95b11f6e1b",
+      "git_blob_size": 56567,
+      "mode": "all_crlf",
+      "newline_count": 21,
+      "path": "results/v26/development/rehearsal_26015/vllm_metrics_periodic.json.partial.jsonl"
+    },
+    {
+      "frozen_sha256": "a14819feaa12fbbe61f0dce9c06e6283b48bb8a25852f4322b11a43d258d4799",
+      "frozen_size": 518585,
+      "git_blob_sha256": "60ad9a6a44538e552ee7b751f40ba15e30e0b819b8e7185beba65f4731787439",
+      "git_blob_size": 517395,
+      "mode": "all_crlf",
+      "newline_count": 1190,
+      "path": "results/v26/final/nvidia_telemetry.json.partial.jsonl"
+    },
+    {
+      "frozen_sha256": "02f0174a348667d3249d4598cb1e6079cc2f6173ed05f72b51884979a0241fb9",
+      "frozen_size": 576462,
+      "git_blob_sha256": "70fbe610380a1d43578003533d108b64c273c8a717e6d08705334712fa093565",
+      "git_blob_size": 576249,
+      "mode": "all_crlf",
+      "newline_count": 213,
+      "path": "results/v26/final/vllm_metrics_periodic.json.partial.jsonl"
+    },
+    {
+      "frozen_sha256": "a550cae694d5cb5242c4d40d9e83258f71ff4fdfa430149c05c9162720e5d10b",
+      "frozen_size": 455924,
+      "git_blob_sha256": "5c58a0ad12474b908e8bc15924044277e5abb5fa88e9bf8800f4f2a79740eee1",
+      "git_blob_size": 454878,
+      "mode": "all_crlf",
+      "newline_count": 1046,
+      "path": "results/v26/qualification/nvidia_telemetry.json.partial.jsonl"
+    },
+    {
+      "frozen_sha256": "0724d550d34e086c8ef6f32ff1ceb7fce1e4cb362cd8587b2f4196c81588b689",
+      "frozen_size": 560079,
+      "git_blob_sha256": "4e5964093a2b48483c26993f958cb8421915214206032e8ed7a952f0b49e9cda",
+      "git_blob_size": 559872,
+      "mode": "all_crlf",
+      "newline_count": 207,
+      "path": "results/v26/qualification/vllm_metrics_periodic.json.partial.jsonl"
+    },
+    {
+      "frozen_sha256": "b38959f781c8f19062dd8915120048991a814cf62989f04a6f66032e5fa5fb2c",
+      "frozen_size": 3323,
+      "git_blob_sha256": "467161e558c8cd6eae7d78a24b9b3009d8b913c6cee02c513310a86ff5d6c60b",
+      "git_blob_size": 3243,
+      "mode": "all_crlf",
+      "newline_count": 80,
+      "path": "scripts/v26_prepare_development.py"
+    },
+    {
+      "frozen_sha256": "378eda93d02d88cc9daf555688eca56ad07c192d6e6c2598fed3ed5f539af7cb",
+      "frozen_size": 98,
+      "git_blob_sha256": "ea10bd93b8600adfbb631f0b269d4834089ef24089525824e38a99aa8fc31a29",
+      "git_blob_size": 95,
+      "mode": "all_crlf",
+      "newline_count": 3,
+      "path": "src/controlflow/__init__.py"
+    },
+    {
+      "frozen_sha256": "161d49cd1b94b4d32a301d7c095ad492677f157bc7d8753e89cabc241460a131",
+      "frozen_size": 3519,
+      "git_blob_sha256": "51eb469da1a801b75a6ece98003a2d7ec85e9b1b9eb786f92a7d18d6e10e648d",
+      "git_blob_size": 3424,
+      "mode": "all_crlf",
+      "newline_count": 95,
+      "path": "src/controlflow/agents/durable.py"
+    },
+    {
+      "frozen_sha256": "cc6c4194ceea480ed231019e88aa54b25f93c3e77c8b85aee72f7c1d2b74c692",
+      "frozen_size": 40272,
+      "git_blob_sha256": "ca6ce543ab004c1b829a0525e51995e0169c954dd8595e05ad253b53cad5ef58",
+      "git_blob_size": 39403,
+      "mode": "all_crlf",
+      "newline_count": 869,
+      "path": "src/controlflow/agents/experiments.py"
+    },
+    {
+      "frozen_sha256": "e4536e22359e8d7aee7dc9b1e2b53462a1c4378fda62fd45f7236f13e7d960ad",
+      "frozen_size": 72146,
+      "git_blob_sha256": "282ce02d4f65422146dc82847a6ff7ca07ff9e537aacf1817a607588f0ce7793",
+      "git_blob_size": 70654,
+      "mode": "all_crlf",
+      "newline_count": 1492,
+      "path": "src/controlflow/agents/workflow.py"
+    },
+    {
+      "frozen_sha256": "cc5e63cafc80b2e13f4dba3fd68e65ed61b8ee66346f985a8efd3ee7fab27717",
+      "frozen_size": 67,
+      "git_blob_sha256": "0bdbcd527e54c991a1bb03d408adc260b237efd6ebcb4ce5f5118bcff500efa5",
+      "git_blob_size": 66,
+      "mode": "all_crlf",
+      "newline_count": 1,
+      "path": "src/controlflow/audit/__init__.py"
+    },
+    {
+      "frozen_sha256": "930fadce19d2ae48f6b5f9cd2d9098551363572925d314085363803763be5d5b",
+      "frozen_size": 9817,
+      "git_blob_sha256": "3983158a5bf24ac290002264350e1cac678fa248b3a4faa5bee7851357948d80",
+      "git_blob_size": 9607,
+      "mode": "all_crlf",
+      "newline_count": 210,
+      "path": "src/controlflow/audit/final_attestation.py"
+    },
+    {
+      "frozen_sha256": "9cbca44f173384f28902cadc3c33148261d63378b6a30a18ae3b291b934e4cd7",
+      "frozen_size": 29976,
+      "git_blob_sha256": "639195dea591b46f2e6d58653f32183eaa4495372f675d8aa505b9e79236141c",
+      "git_blob_size": 29347,
+      "mode": "all_crlf",
+      "newline_count": 629,
+      "path": "src/controlflow/audit/ledger.py"
+    },
+    {
+      "frozen_sha256": "af7102667db50fd5d4782eabd4ea97a431aa3908fb7ade00806e18ff8830a7c4",
+      "frozen_size": 1403,
+      "git_blob_sha256": "42e6945348a6cb45ec5826d216615289643ee7ffece3d3d3d02e23d72577f626",
+      "git_blob_size": 1363,
+      "mode": "all_crlf",
+      "newline_count": 40,
+      "path": "src/controlflow/audit/recovery.py"
+    },
+    {
+      "frozen_sha256": "4cdc5068b334eb4174cd49443ea0fb2896ab985fc54f97aeafbabc581d8f8e64",
+      "frozen_size": 63,
+      "git_blob_sha256": "fd8bbf76fe78db44f526a3d1379620c41b250d57c662b455cc9c99ff5a91be27",
+      "git_blob_size": 62,
+      "mode": "all_crlf",
+      "newline_count": 1,
+      "path": "src/controlflow/authorization/__init__.py"
+    },
+    {
+      "frozen_sha256": "99907a5ee347660414e6d580d632c091922eb09839636c9e04e971cd716275f2",
+      "frozen_size": 1369,
+      "git_blob_sha256": "1c54c3622b203bebcc7ad360dbabf6fb65db1b65ea824889963b073abad2af7e",
+      "git_blob_size": 1331,
+      "mode": "all_crlf",
+      "newline_count": 38,
+      "path": "src/controlflow/authorization/identity.py"
+    },
+    {
+      "frozen_sha256": "c80717409e3c37f95208725422c285960de5b90de79d2d63dc769b117b2b88d2",
+      "frozen_size": 3096,
+      "git_blob_sha256": "8b9c5a9c275dc056646f7aca67894a539ea097932de833cc8ddb86e3297fd52d",
+      "git_blob_size": 3017,
+      "mode": "all_crlf",
+      "newline_count": 79,
+      "path": "src/controlflow/authorization/policy.py"
+    },
+    {
+      "frozen_sha256": "e4faeb9f4b2f40d77e5d46b083a82eb22a34feb47c0c927b5b7f6b752bafdc41",
+      "frozen_size": 838,
+      "git_blob_sha256": "921cc69b8d36cea28e70ef951af3fab779023610ef4eb4a4b7786de2c722e362",
+      "git_blob_size": 807,
+      "mode": "all_crlf",
+      "newline_count": 31,
+      "path": "src/controlflow/cli.py"
+    },
+    {
+      "frozen_sha256": "d518fbf4eb54a9c183f20e35d86489a414d0b60970bd85bae40751bd5554554f",
+      "frozen_size": 60,
+      "git_blob_sha256": "08443d28b7babbe90ad777ff05f66616d8508ea5e21007650be6380fc8b051d0",
+      "git_blob_size": 59,
+      "mode": "all_crlf",
+      "newline_count": 1,
+      "path": "src/controlflow/core/__init__.py"
+    },
+    {
+      "frozen_sha256": "8e05f84a74e7e43cba98a57fd8a75f553c5efcc70437eb680792baac5cf6ff21",
+      "frozen_size": 4683,
+      "git_blob_sha256": "faa0273c28a9c5caf767ce281d749080bf010e24390f8ed8f55ceda2826579a7",
+      "git_blob_size": 4558,
+      "mode": "all_crlf",
+      "newline_count": 125,
+      "path": "src/controlflow/core/resources.py"
+    },
+    {
+      "frozen_sha256": "c09849b4e4f4860c7cc5aa20a2ab86c816a8bc23977b01caa86e3696dc5bc7bf",
+      "frozen_size": 6839,
+      "git_blob_sha256": "e4f1b686c66b820fda9406815ab6ac12c96aab7e0ba5048d4bfd566d4c2b672f",
+      "git_blob_size": 6661,
+      "mode": "all_crlf",
+      "newline_count": 178,
+      "path": "src/controlflow/core/state.py"
+    },
+    {
+      "frozen_sha256": "354633068ae3758e33ed74bac80e073d49d21625695038bfc682aa1d8afa5fd5",
+      "frozen_size": 59,
+      "git_blob_sha256": "4933a9666128d870f349b0259fbf8fd6784b38a7749f6d908d43a73ff20ca5ad",
+      "git_blob_size": 58,
+      "mode": "all_crlf",
+      "newline_count": 1,
+      "path": "src/controlflow/data/__init__.py"
+    },
+    {
+      "frozen_sha256": "340edddbe9b52efa728c8ecbe29114a5b8c74a9a1aa8ce46e0f9ecb64922fb71",
+      "frozen_size": 3372,
+      "git_blob_sha256": "04a0f95e61d6336c380221eddcf557ca07a024bf731182e4e9b1876f5851d877",
+      "git_blob_size": 3268,
+      "mode": "all_crlf",
+      "newline_count": 104,
+      "path": "src/controlflow/data/contracts.py"
+    },
+    {
+      "frozen_sha256": "b0ada3283bbcff45a9f026601a9b38e301d1fb85318ce0423968d5ab20b306af",
+      "frozen_size": 11314,
+      "git_blob_sha256": "6e796ec5e926e1cf3d88f1351ea44bc352517c15525007dd6ce3d40b8363f713",
+      "git_blob_size": 11048,
+      "mode": "all_crlf",
+      "newline_count": 266,
+      "path": "src/controlflow/data/download.py"
+    },
+    {
+      "frozen_sha256": "8a317f038e8e625e46cefa45c844b459816c23fe75c7e425a5df9ca8d08c077a",
+      "frozen_size": 3511,
+      "git_blob_sha256": "7970cbb7c07c5b34d638f28b16a0be0cbb77cabcf8d33140c4a019adde54a42e",
+      "git_blob_size": 3431,
+      "mode": "all_crlf",
+      "newline_count": 80,
+      "path": "src/controlflow/data/lakehouse.py"
+    },
+    {
+      "frozen_sha256": "b986e2b34c3e2827468f2fc605a991f3fc407bf7d29b45cbec4ebd9fe4641b9c",
+      "frozen_size": 15267,
+      "git_blob_sha256": "e47b24c76ad1c34de2687c0f717ce154a875b6076a32f2370750d9a1e2ab521b",
+      "git_blob_size": 14904,
+      "mode": "all_crlf",
+      "newline_count": 363,
+      "path": "src/controlflow/data/lakehouse_build.py"
+    },
+    {
+      "frozen_sha256": "5db98e07a34484013287a5869257c19c802d26b7471e414126f02016af4b7af1",
+      "frozen_size": 15282,
+      "git_blob_sha256": "eec05d1741c84850cda9d560b33ae66cac6e2315b1d5264b1741f4a9c38409ae",
+      "git_blob_size": 14922,
+      "mode": "all_crlf",
+      "newline_count": 360,
+      "path": "src/controlflow/data/profile.py"
+    },
+    {
+      "frozen_sha256": "82bbff303e5f2c2427f280191c767db96e0e3316a6c85f028118517686480809",
+      "frozen_size": 7524,
+      "git_blob_sha256": "340eff31e1ef5fd042a3d10116f2801d51e0ccec75c3b7f0a820864f4b3fe9ea",
+      "git_blob_size": 7345,
+      "mode": "all_crlf",
+      "newline_count": 179,
+      "path": "src/controlflow/data/splits.py"
+    },
+    {
+      "frozen_sha256": "ba7d1a50a707ad6687e935d158c845b266023c263d57aa2d4f9f37e05c7aab93",
+      "frozen_size": 13944,
+      "git_blob_sha256": "86638a9c56edabf13ac8c2c83a261acb260a2582451527028358ff542a627a87",
+      "git_blob_size": 13627,
+      "mode": "all_crlf",
+      "newline_count": 317,
+      "path": "src/controlflow/data/stage_raw.py"
+    },
+    {
+      "frozen_sha256": "fd9adecaff8e55d8488e4b90f04b5dcb0face2ffa2c35ef7ee977ad6b355e426",
+      "frozen_size": 7582,
+      "git_blob_sha256": "938dce0f264c7625758cc29022bc3b74e4e3fcb06c1bdafaadead60d85f2476f",
+      "git_blob_size": 7394,
+      "mode": "all_crlf",
+      "newline_count": 188,
+      "path": "src/controlflow/data/streaming.py"
+    },
+    {
+      "frozen_sha256": "fae9e49b4057eabbea1af64f315d344f1e257c50f1cc5f929c551c7de0fddca6",
+      "frozen_size": 11587,
+      "git_blob_sha256": "8e429b9f7598534b2e934c443d76400cc598f290b553b2f9281acf1c46c4ddd9",
+      "git_blob_size": 11334,
+      "mode": "all_crlf",
+      "newline_count": 253,
+      "path": "src/controlflow/data/synthetic.py"
+    },
+    {
+      "frozen_sha256": "a0afd49c211bf443064c72666000aeb9eaaee72905951041a723bbb91f6a56cb",
+      "frozen_size": 2638,
+      "git_blob_sha256": "b3a40c3443d075b37d734d5c87b3388a5e0334ff9a3f01b78cc9745ba461f247",
+      "git_blob_size": 2565,
+      "mode": "all_crlf",
+      "newline_count": 73,
+      "path": "src/controlflow/data/temporal.py"
+    },
+    {
+      "frozen_sha256": "2c70cf6c439e93655c223e30f33d1cfc5215e57b17e7bcab90f132db5ca157cd",
+      "frozen_size": 3476,
+      "git_blob_sha256": "a0cd06b0cca2481362dbe84d986aa6b32fab96ed8b6543b3c065fdd3875b6ae2",
+      "git_blob_size": 3396,
+      "mode": "all_crlf",
+      "newline_count": 80,
+      "path": "src/controlflow/deployment_simulation.py"
+    },
+    {
+      "frozen_sha256": "9eb6a49f38ac4a3fb76fac207336d99d454bdffddf355b0e473859d0aaf2c7b3",
+      "frozen_size": 59,
+      "git_blob_sha256": "9fa2bf5457638a52838800115e961349de2d9970bea868ab23655003bee014ad",
+      "git_blob_size": 58,
+      "mode": "all_crlf",
+      "newline_count": 1,
+      "path": "src/controlflow/eval/__init__.py"
+    },
+    {
+      "frozen_sha256": "754c14a654d151d3aa9935250f5f1b7981acc03db57c66fa4d680f2910d7dbf9",
+      "frozen_size": 7549,
+      "git_blob_sha256": "47605f659b64833c0ff07e23baa179c740c8c0464ee51c0d70a19e344936ede6",
+      "git_blob_size": 7396,
+      "mode": "all_crlf",
+      "newline_count": 153,
+      "path": "src/controlflow/eval/ablation_experiment.py"
+    },
+    {
+      "frozen_sha256": "c8f63004b36ee64a1d5e5ee9656917dd48f87d38fbcadae328991fb1f08345ea",
+      "frozen_size": 3886,
+      "git_blob_sha256": "e8d380453e720a53dce711be88cc7c12bc599e483c8b6c2f29bd1d214bcc666b",
+      "git_blob_size": 3806,
+      "mode": "all_crlf",
+      "newline_count": 80,
+      "path": "src/controlflow/eval/business_experiment.py"
+    },
+    {
+      "frozen_sha256": "e5144be684a2ded5a6e2198665ba3c7f001e4ccc1c53c8e0ac9055cd765b2c69",
+      "frozen_size": 3745,
+      "git_blob_sha256": "0cf2bd31ca894078c800092c2f7f09020e8507a57b12ed421063b233ddc62583",
+      "git_blob_size": 3656,
+      "mode": "all_crlf",
+      "newline_count": 89,
+      "path": "src/controlflow/eval/data_failure_experiment.py"
+    },
+    {
+      "frozen_sha256": "116d4ab42c20290a6787c0be745f27656f84165d5ed2683a67fd3408f2245566",
+      "frozen_size": 2628,
+      "git_blob_sha256": "abb39c784787441731dc92d67490de79d5a3806095a583496796bcd7c8177c1b",
+      "git_blob_size": 2568,
+      "mode": "all_crlf",
+      "newline_count": 60,
+      "path": "src/controlflow/eval/drift_experiment.py"
+    },
+    {
+      "frozen_sha256": "37ec28ea49428c8dbedf4d32444a24d2866c6cd0bc51bc8d64135a4bbd264277",
+      "frozen_size": 3273,
+      "git_blob_sha256": "4eb6ae4b8439c92c94e1a12ff48c1fccd8c269cf052cc0665701d744bd80f12f",
+      "git_blob_size": 3189,
+      "mode": "all_crlf",
+      "newline_count": 84,
+      "path": "src/controlflow/eval/metrics.py"
+    },
+    {
+      "frozen_sha256": "14ae38cb66fb70f9c6dd65de55fbbdd554f84b5eade9b0cce085339a8f728683",
+      "frozen_size": 5287,
+      "git_blob_sha256": "b7af2375b8977ef472e8540f440cc6858ba5444bda0d45a874d8b3eb7665ea3d",
+      "git_blob_size": 5159,
+      "mode": "all_crlf",
+      "newline_count": 128,
+      "path": "src/controlflow/eval/recovery_worker.py"
+    },
+    {
+      "frozen_sha256": "e123c7a5f60729ce8611d040b71283dda8b992c43ede8405773d8fd2f29a781d",
+      "frozen_size": 18026,
+      "git_blob_sha256": "d65362e37af44a22e94556931d151db442529da99cd98127e8598f5de88d6d33",
+      "git_blob_size": 17613,
+      "mode": "all_crlf",
+      "newline_count": 413,
+      "path": "src/controlflow/eval/reliability_experiment.py"
+    },
+    {
+      "frozen_sha256": "b1eb7c6143580f102af2d982d1418d1c05c98f46aee055f633418dc216fd9363",
+      "frozen_size": 3561,
+      "git_blob_sha256": "0def944452a85c56f5dfefee480b45165adcab1b99aaa6d050e6cba0d2bfc0f3",
+      "git_blob_size": 3481,
+      "mode": "all_crlf",
+      "newline_count": 80,
+      "path": "src/controlflow/eval/rescore_governed_claims.py"
+    },
+    {
+      "frozen_sha256": "8f38152f2aee9b99c08bd43ffc601e7f54886e1ee216e801fc6bbb0fcf894db7",
+      "frozen_size": 2428,
+      "git_blob_sha256": "6d8dfc62a434753919516bf50033d2284b0173f3eebe89732137a55ee9038cf7",
+      "git_blob_size": 2367,
+      "mode": "all_crlf",
+      "newline_count": 61,
+      "path": "src/controlflow/eval/scaling_experiment.py"
+    },
+    {
+      "frozen_sha256": "1c64a2024e43f3b0e8fdb3fe608f7c0b07adaad927b2b7b47d772279f27ea2a3",
+      "frozen_size": 27127,
+      "git_blob_sha256": "8c5247a77790451552f76a6c5aaad9360c86628880e43f1aba8f42cfd435d42d",
+      "git_blob_size": 26554,
+      "mode": "all_crlf",
+      "newline_count": 573,
+      "path": "src/controlflow/eval/security_experiment.py"
+    },
+    {
+      "frozen_sha256": "08c7186c231c058189ebd85bd7848be81d88e1ae9b877f9d3ba9e632bd4c45f1",
+      "frozen_size": 5652,
+      "git_blob_sha256": "701976f3a03fee9afc46bbb668184ec5d4c8764bb3b2802280c6632f5b3f4f21",
+      "git_blob_size": 5520,
+      "mode": "all_crlf",
+      "newline_count": 132,
+      "path": "src/controlflow/eval/statistical_experiment.py"
+    },
+    {
+      "frozen_sha256": "18955a2ab1a5699af4e040497633b383c8819febc91a1c5e04ebd653d2ad2401",
+      "frozen_size": 56,
+      "git_blob_sha256": "5ead94d7359285c6c612fea95304412978af1a23675ffb0d9278007fa089f7fb",
+      "git_blob_size": 55,
+      "mode": "all_crlf",
+      "newline_count": 1,
+      "path": "src/controlflow/features/__init__.py"
+    },
+    {
+      "frozen_sha256": "e8df7de52a6a045b5cfb55f266f6c961bf208211e3142dd18f6e47c57a679f93",
+      "frozen_size": 5403,
+      "git_blob_sha256": "5351b0f07f2e814d35feb4b1d23d37d309e3bb6e6f68e5cd927322592863750f",
+      "git_blob_size": 5281,
+      "mode": "all_crlf",
+      "newline_count": 122,
+      "path": "src/controlflow/features/leakage_experiment.py"
+    },
+    {
+      "frozen_sha256": "f1d1f57b6e07ef53deb16f49b1bc386930947a6e4ef079dabb7aa644665404d0",
+      "frozen_size": 4146,
+      "git_blob_sha256": "81dbc178470238218e2ba2ab80b483478114bc2356e40655877efe7a7c69f0cf",
+      "git_blob_size": 4052,
+      "mode": "all_crlf",
+      "newline_count": 94,
+      "path": "src/controlflow/features/point_in_time.py"
+    },
+    {
+      "frozen_sha256": "bd103355f26581b2c1d253ae9e04aa89f22390a11ba158b56419870e374e01ed",
+      "frozen_size": 24190,
+      "git_blob_sha256": "e58140755057de41a2730c10263c2dd17b1382699941141c8a060480d017ab33",
+      "git_blob_size": 23675,
+      "mode": "all_crlf",
+      "newline_count": 515,
+      "path": "src/controlflow/final_evaluation.py"
+    },
+    {
+      "frozen_sha256": "5df2879cde1b296d87ebff3f9e433e2db5f92281565d52ebbb4da3f34b171661",
+      "frozen_size": 3051,
+      "git_blob_sha256": "41d7ffa563b844c21a8f47606b2920e78129d90a605fa8737c31f91a21dc60de",
+      "git_blob_size": 2980,
+      "mode": "all_crlf",
+      "newline_count": 71,
+      "path": "src/controlflow/final_statistics.py"
+    },
+    {
+      "frozen_sha256": "f33c6d4c566db3d49ac4aec87be43f779f5414edb503a8a583cf393d5f59eed4",
+      "frozen_size": 5226,
+      "git_blob_sha256": "6318a23635a668a0a740997a4e9102d6db58fa22479bb771c33564f36003c3c8",
+      "git_blob_size": 5084,
+      "mode": "all_crlf",
+      "newline_count": 142,
+      "path": "src/controlflow/hitl/approval.py"
+    },
+    {
+      "frozen_sha256": "f3cac2b29306a918206e1053b566a837bd33e50226a39e48e21f3d7456ba86a1",
+      "frozen_size": 771,
+      "git_blob_sha256": "12e1388589d48988ae09257ebc0ef9e51c75f6c0c7966134f034fba472accb8a",
+      "git_blob_size": 741,
+      "mode": "all_crlf",
+      "newline_count": 30,
+      "path": "src/controlflow/interfaces.py"
+    },
+    {
+      "frozen_sha256": "e06f8d0f5ecaf91c74e2a10a5d09b817571e6fb7a89d8a5a78fb9028a0b816e1",
+      "frozen_size": 6925,
+      "git_blob_sha256": "e561d7a64c5d3694fc222a722caebbecff4373b9b4460c344f28822b8cee477c",
+      "git_blob_size": 6749,
+      "mode": "all_crlf",
+      "newline_count": 176,
+      "path": "src/controlflow/model_preflight.py"
+    },
+    {
+      "frozen_sha256": "442f109ff9f0743204fb46f03007c6817026dfd060354ea73f4f611aba8eff9c",
+      "frozen_size": 73,
+      "git_blob_sha256": "b25ef02fee76333413d1658c9998223876086eeb7fe23f689a4b890f2afdb72f",
+      "git_blob_size": 72,
+      "mode": "all_crlf",
+      "newline_count": 1,
+      "path": "src/controlflow/modeling/__init__.py"
+    },
+    {
+      "frozen_sha256": "873ae5ce5b47e46edb95b99d3c892a3d29723e5d0b87d00c48c6658a9a8217b7",
+      "frozen_size": 8160,
+      "git_blob_sha256": "9527c6aebe6d963852c91fe82ff607c7b47afdd364acef2b52e3ac4f8cd3efcd",
+      "git_blob_size": 7986,
+      "mode": "all_crlf",
+      "newline_count": 174,
+      "path": "src/controlflow/modeling/anomaly.py"
+    },
+    {
+      "frozen_sha256": "41180ecbb0602b129e904442fcc73980ab74fbef938caca0413c403d6fc2a42b",
+      "frozen_size": 4410,
+      "git_blob_sha256": "5cb1b4e6c800f7ec8676835224fda2a9f5c387ce42522d66b4a129f932731709",
+      "git_blob_size": 4312,
+      "mode": "all_crlf",
+      "newline_count": 98,
+      "path": "src/controlflow/modeling/calibration.py"
+    },
+    {
+      "frozen_sha256": "687d15d56d5215ac5d64c9e7262827364e1f52dec85ad81d155bae366a3504de",
+      "frozen_size": 8628,
+      "git_blob_sha256": "375852f8bd530670271b9e87fdce4d7a3955fc5986c56c2286828898942f6e03",
+      "git_blob_size": 8458,
+      "mode": "all_crlf",
+      "newline_count": 170,
+      "path": "src/controlflow/modeling/calibration_experiment.py"
+    },
+    {
+      "frozen_sha256": "5a4af248c72102ace520e0d73afd824b2ff85a106652da0b3031a11fba5999c2",
+      "frozen_size": 4489,
+      "git_blob_sha256": "8939239ae7d56fbf07f58a95b1fc8c93753581ba4eb0d5d9f5183f9ebda2372f",
+      "git_blob_size": 4400,
+      "mode": "all_crlf",
+      "newline_count": 89,
+      "path": "src/controlflow/modeling/semi_supervised.py"
+    },
+    {
+      "frozen_sha256": "c618d237e810138e75f284488a7245039382dd1aee8cbfc1c66a153e90b48576",
+      "frozen_size": 8312,
+      "git_blob_sha256": "fc05af89a0cd290b5bb6b706e005dafb978e2c283fe1eab1a34fccabbc0d0ece",
+      "git_blob_size": 8074,
+      "mode": "all_crlf",
+      "newline_count": 238,
+      "path": "src/controlflow/modeling/supervised.py"
+    },
+    {
+      "frozen_sha256": "43f1baa5ed79e138194805a6df315377b2cb1455ef40280fb96bb07e3d878309",
+      "frozen_size": 4846,
+      "git_blob_sha256": "729407ea92310557c778b2979627e4a32e130d815d878daf9b1660c654c9c9df",
+      "git_blob_size": 4728,
+      "mode": "all_crlf",
+      "newline_count": 118,
+      "path": "src/controlflow/modeling/text_models.py"
+    },
+    {
+      "frozen_sha256": "5cebc20f26a6872c112bc5cb602734694bc265c02577629ce57258c0c3379684",
+      "frozen_size": 5739,
+      "git_blob_sha256": "6f632216581e1142b4d383c6eeb72b436644afedcb8f45a8d17c29b83d65b201",
+      "git_blob_size": 5607,
+      "mode": "all_crlf",
+      "newline_count": 132,
+      "path": "src/controlflow/modeling/torch_models.py"
+    },
+    {
+      "frozen_sha256": "f6dfe80c68c50d506ab6c1e32b81e53f9edee81c8149c5bc6480a9746bf5c224",
+      "frozen_size": 8934,
+      "git_blob_sha256": "abf7754f41e9dceae18aef5ed1fe29ac2f45523688952ed05eae4f6cfb1360a4",
+      "git_blob_size": 8700,
+      "mode": "all_crlf",
+      "newline_count": 234,
+      "path": "src/controlflow/preflight.py"
+    },
+    {
+      "frozen_sha256": "6348994d01bde718bc2b7c394efbfd906431a573ad341eb9de759596331158ce",
+      "frozen_size": 10987,
+      "git_blob_sha256": "d5d55ae5e793795a8e830192b8211371d8195a4ca4151d97c33fe5a3fc8e478d",
+      "git_blob_size": 10749,
+      "mode": "all_crlf",
+      "newline_count": 238,
+      "path": "src/controlflow/release.py"
+    },
+    {
+      "frozen_sha256": "23dcc00f96c12bed30d3e65478c9b52b320890ce998d903083a956c605dbadf0",
+      "frozen_size": 1322,
+      "git_blob_sha256": "3030509396bfdbed5ae425edd71f70e8fa95526b1f6534b223daeb720528d45f",
+      "git_blob_size": 1284,
+      "mode": "all_crlf",
+      "newline_count": 38,
+      "path": "src/controlflow/release_decision.py"
+    },
+    {
+      "frozen_sha256": "81204c1223d47e45970592bb866bbb27c4c4e128c08dad999dc1422f05f45557",
+      "frozen_size": 23909,
+      "git_blob_sha256": "87597a0db6c5e72f9e3ec4e3f52c983af278437b24a3b8d375b749ef9cf4506a",
+      "git_blob_size": 23386,
+      "mode": "all_crlf",
+      "newline_count": 523,
+      "path": "src/controlflow/reporting/generate.py"
+    },
+    {
+      "frozen_sha256": "0f821c6c8d84e72b02d87efc26a00cc0d1fda60dd6bfe71c10e28013fa840da9",
+      "frozen_size": 85,
+      "git_blob_sha256": "0b761b85e887ef78ad163cb6b0caa5f79aaaa9566941a08798e8faedd97386bd",
+      "git_blob_size": 84,
+      "mode": "all_crlf",
+      "newline_count": 1,
+      "path": "src/controlflow/retrieval/__init__.py"
+    },
+    {
+      "frozen_sha256": "b0b35a49bc95551f847f8177dbaae4507dc5a6c0f46001c2c391f202b97add4a",
+      "frozen_size": 1824,
+      "git_blob_sha256": "caf32508c4144cc5aa53f986fa9800961dcfac0d81f40ac6887c1bee590ff94a",
+      "git_blob_size": 1768,
+      "mode": "all_crlf",
+      "newline_count": 56,
+      "path": "src/controlflow/retrieval/chunking.py"
+    },
+    {
+      "frozen_sha256": "f6044ec50f2161a28ec14b121f56e92ca8a385db349737aa0f0b3235c36ea3bc",
+      "frozen_size": 3155,
+      "git_blob_sha256": "5d5cbcab6a98b0472f404cab468219d2a5d005ace0d5b45d7151907f46719ef3",
+      "git_blob_size": 3082,
+      "mode": "all_crlf",
+      "newline_count": 73,
+      "path": "src/controlflow/retrieval/chunking_experiment.py"
+    },
+    {
+      "frozen_sha256": "bf9a638b7f9f92986767979a0648e9f9ebf1d5e15b4f486156c1cddc40a584fd",
+      "frozen_size": 6729,
+      "git_blob_sha256": "1113cccb44d731cab04f48efc91dad93a75f369bdb2eaab5512a2f176b6daf9b",
+      "git_blob_size": 6547,
+      "mode": "all_crlf",
+      "newline_count": 182,
+      "path": "src/controlflow/retrieval/core.py"
+    },
+    {
+      "frozen_sha256": "275de4d7d22c02dba85979469365de41fe612f1966910c82e1f8698d40087f15",
+      "frozen_size": 2178,
+      "git_blob_sha256": "337eedcb98e38842617550f44cfb111c070c020269c8e0e1efd62a249623d40f",
+      "git_blob_size": 2128,
+      "mode": "all_crlf",
+      "newline_count": 50,
+      "path": "src/controlflow/retrieval/evaluate.py"
+    },
+    {
+      "frozen_sha256": "78e599632258e713627aec141c13447f4952599ce20234280e3797279bbbf54b",
+      "frozen_size": 12547,
+      "git_blob_sha256": "93cea3f65e645a8233dec5a513886446c71324865796c8a782a048236a65591a",
+      "git_blob_size": 12262,
+      "mode": "all_crlf",
+      "newline_count": 285,
+      "path": "src/controlflow/retrieval/experiments.py"
+    },
+    {
+      "frozen_sha256": "407965d15bdef0fb3ba003e9f7ace0fd1cc368fcdfa9aea61015a4ec8045a875",
+      "frozen_size": 2596,
+      "git_blob_sha256": "d4668943627f95a4342838e24d1d38d1d6ef781fd1f858255c160056698e4738",
+      "git_blob_size": 2535,
+      "mode": "all_crlf",
+      "newline_count": 61,
+      "path": "src/controlflow/retrieval/scaling_experiment.py"
+    },
+    {
+      "frozen_sha256": "b037e7db9d3bd7544a9c51105dbe6ccc36fbbc60a911d0d3667e109f443f3920",
+      "frozen_size": 5370,
+      "git_blob_sha256": "f0ebecbec32fcba2900087ed31ac6978b6554185f2cb034cc591e82495d51b88",
+      "git_blob_size": 5191,
+      "mode": "all_crlf",
+      "newline_count": 179,
+      "path": "src/controlflow/schemas.py"
+    },
+    {
+      "frozen_sha256": "3c175a6c1c0ad237f439b6b496911bdd9dc2d14f85dcadc32eb7808a52ff6d01",
+      "frozen_size": 281,
+      "git_blob_sha256": "941ee54a8667c099e1bc046bb11823adf925cd2fa9757ade43fabf2c585a16a2",
+      "git_blob_size": 271,
+      "mode": "all_crlf",
+      "newline_count": 10,
+      "path": "src/controlflow/serving/app.py"
+    },
+    {
+      "frozen_sha256": "7d09b672bfd6aafdcc499a27e1ca54c97e02c39235b4251c776f7fd1b7c78d6d",
+      "frozen_size": 54,
+      "git_blob_sha256": "3b215d7b14acd3da4c815e30f366d42dcf3d4073c4502ca60fb7a2fa31e8486f",
+      "git_blob_size": 53,
+      "mode": "all_crlf",
+      "newline_count": 1,
+      "path": "src/controlflow/tools/__init__.py"
+    },
+    {
+      "frozen_sha256": "3be73f9ebb2e1362b1f1f23e9b6015ed742d65269e8668546eff80bb60392208",
+      "frozen_size": 2423,
+      "git_blob_sha256": "2ebc63f7e888b9481cdcd1a77b4ffc35f4a21c1241dce30106ef8d20ec3f8112",
+      "git_blob_size": 2345,
+      "mode": "all_crlf",
+      "newline_count": 78,
+      "path": "src/controlflow/tools/deadline.py"
+    },
+    {
+      "frozen_sha256": "6a87b05006a0ed97257d30e55af664810f919c0a788d736316755482fa5723dd",
+      "frozen_size": 11849,
+      "git_blob_sha256": "392b26f8cd5205736397f50d5ec317d08c32370403a78e7b60a85d368aa64ebe",
+      "git_blob_size": 11573,
+      "mode": "all_crlf",
+      "newline_count": 276,
+      "path": "src/controlflow/tools/registry.py"
+    },
+    {
+      "frozen_sha256": "884d8ed8b99dde48d77858be821fe74d2a1f47a6f018b3f72a0819a91ea7541e",
+      "frozen_size": 2443,
+      "git_blob_sha256": "10d04f3ddc90c366df8448be1214155c4e8955ca43960ce7ca6f9e2fb33dbf99",
+      "git_blob_size": 2386,
+      "mode": "all_crlf",
+      "newline_count": 57,
+      "path": "src/controlflow/tools/sql_safety.py"
+    },
+    {
+      "frozen_sha256": "abf87e0017a5bd624f338420489d40f2f3bef254a8d4cad5296215866e5749ff",
+      "frozen_size": 3457,
+      "git_blob_sha256": "3a5c1145a77009417bc50ddf6fcf4a275db321d41a6c766e09f55658323fccc1",
+      "git_blob_size": 3371,
+      "mode": "all_crlf",
+      "newline_count": 86,
+      "path": "src/controlflow/tracking/mlflow_sync.py"
+    },
+    {
+      "frozen_sha256": "b834ab211c680d014070c1fc8d628a66deebe2cb56291fae0f359b96a50fd79e",
+      "frozen_size": 21566,
+      "git_blob_sha256": "2cab074bf3e0e0e130e8a6c73455d79e0aec80675984476c80aa9e6774038b06",
+      "git_blob_size": 21094,
+      "mode": "all_crlf",
+      "newline_count": 472,
+      "path": "src/controlflow/v22/models.py"
+    },
+    {
+      "frozen_sha256": "69b52a60f52a73486c0c92e807cac004fa0c92f9c45078873d7b8a54bc0562b8",
+      "frozen_size": 11101,
+      "git_blob_sha256": "de07c93ff056eef748e5541b18cfdc5364094c093f55ad76f4919eddb0cbcf37",
+      "git_blob_size": 10875,
+      "mode": "all_crlf",
+      "newline_count": 226,
+      "path": "src/controlflow/v26/admission.py"
+    },
+    {
+      "frozen_sha256": "bc6703131a1afb54b81dd7706be6e15168700208d58e3b7486e7e1b7277d770d",
+      "frozen_size": 3672,
+      "git_blob_sha256": "5ebb508707cb66b8bb3aa6ece1eadaacd385c7e933751649dbe97e9497fcde70",
+      "git_blob_size": 3576,
+      "mode": "all_crlf",
+      "newline_count": 96,
+      "path": "src/controlflow/v26/artifact_closure.py"
+    },
+    {
+      "frozen_sha256": "7fcc06f316366285f21e6a8884602da37a7498e7f276c9fff94b328ca58ad462",
+      "frozen_size": 5031,
+      "git_blob_sha256": "1b9a97f5698baa0bc41ac5600817fcbb09faff0ada69bf95f60c259a7c1a440a",
+      "git_blob_size": 4933,
+      "mode": "all_crlf",
+      "newline_count": 98,
+      "path": "src/controlflow/v26/closure_receipt.py"
+    },
+    {
+      "frozen_sha256": "be61fa4053e8a7eb8e338ef21d35c92db498d945216141e10454a267344cc816",
+      "frozen_size": 9910,
+      "git_blob_sha256": "2e195af79ca595b70c8b23bde2cf859d121b4dc01eea6c1010309f3add9e203f",
+      "git_blob_size": 9698,
+      "mode": "all_crlf",
+      "newline_count": 212,
+      "path": "src/controlflow/v26/denominators.py"
+    },
+    {
+      "frozen_sha256": "55f58d1081d550bfdb61497e4c21ef846c2bf29b3b6b485cacc96f09ea958e25",
+      "frozen_size": 2579,
+      "git_blob_sha256": "f383ca4274d03bd7c4a33f02f2611879d38890125a3fae1eaead9988849a1267",
+      "git_blob_size": 2525,
+      "mode": "all_crlf",
+      "newline_count": 54,
+      "path": "src/controlflow/v26/freeze_validation.py"
+    },
+    {
+      "frozen_sha256": "5aaae7a879bf4d78d2f1cdba291bdd968af53431471cb717db67e356578e2642",
+      "frozen_size": 13406,
+      "git_blob_sha256": "6aea3908dce163b6612d33bfa9824964c1aa2aa4454386b5c3f3355bef8d90f4",
+      "git_blob_size": 13164,
+      "mode": "all_crlf",
+      "newline_count": 242,
+      "path": "src/controlflow/v26/generator.py"
+    },
+    {
+      "frozen_sha256": "8d0be3afa8dfc0c1a1399ac03a3cdb70276a23cdf9073e27b2e6b0ed6f9889d2",
+      "frozen_size": 15714,
+      "git_blob_sha256": "d564a04079c895469014c25426755ac7389697dff149aa3e5401b75d4e0e35c0",
+      "git_blob_size": 15363,
+      "mode": "all_crlf",
+      "newline_count": 351,
+      "path": "src/controlflow/v26/postclose.py"
+    },
+    {
+      "frozen_sha256": "95af102eb3d0c5110fc66ee1e106669af50427bd9352754af86d812781f55ee9",
+      "frozen_size": 3975,
+      "git_blob_sha256": "3f8483e2718e4d2c4556da7d8025d01efe5767ed2c6917cb783646fd09ee6be0",
+      "git_blob_size": 3880,
+      "mode": "all_crlf",
+      "newline_count": 95,
+      "path": "src/controlflow/v26/terminal_decision.py"
+    },
+    {
+      "frozen_sha256": "4232eee3d0a3ff26a034b15ee191f71adf08aa9f2c59742548f59890a156ed84",
+      "frozen_size": 52,
+      "git_blob_sha256": "9e44275c72fb76245e5b6994d6d4a039b7dd57624d981b06b162ddc73de8dc5d",
+      "git_blob_size": 51,
+      "mode": "all_crlf",
+      "newline_count": 1,
+      "path": "src/controlflow/verification/__init__.py"
+    },
+    {
+      "frozen_sha256": "c9bc030e7ef3e08768f4d7949458fcb482e2d1db1db71f03f204ab518c3df781",
+      "frozen_size": 2555,
+      "git_blob_sha256": "0e29fe938b551545f76d86f4124437477e5446b289c204da9ed3f20b3d42cdb7",
+      "git_blob_size": 2506,
+      "mode": "all_crlf",
+      "newline_count": 49,
+      "path": "src/controlflow/verification/claims.py"
+    },
+    {
+      "crlf_line_ranges": [
+        [
+          0,
+          346
+        ],
+        [
+          350,
+          392
+        ],
+        [
+          396,
+          2872
+        ]
+      ],
+      "frozen_sha256": "b4a982fbf7d8015cff282ef37731c793ea576b19da52b264656d9b7f439d124d",
+      "frozen_size": 406102,
+      "git_blob_sha256": "615fc8730a2da49487fbbb2aa3e0e1823c4f1101d547c9c57db2031b493fab6e",
+      "git_blob_size": 403235,
+      "mode": "selected_crlf",
+      "newline_count": 2873,
+      "path": "uv.lock"
+    }
+  ]
+}
