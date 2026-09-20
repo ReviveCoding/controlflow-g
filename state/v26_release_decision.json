@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "version": "2.6",
+  "decision": "PROMOTE",
+  "scope": "synthetic_research_release_only",
+  "real_bank_deployment": false,
+  "decided_at": "2026-09-20T04:38:46Z",
+  "qualification": {
+    "identity": "V26QUAL",
+    "seed": 26061,
+    "status": "COMPLETE",
+    "manifest_sha256": "fa7fad12c1ffa1c2c9ee5cbfe1e3f91e5553ff7ce962755f5cd18d5930643f10",
+    "freeze_hash": "fcfc437601bd1bb494525494742c7c6417c9a57734d119e04a92ee47bedf378f"
+  },
+  "final": {
+    "identity": "V26FINAL",
+    "seed": 26062,
+    "status": "COMPLETE",
+    "manifest_sha256": "c00efc673777e160de70b8d2796259c66c1eefd17b083042fd3b240996284e58",
+    "freeze_hash": "7224fccbe1ca8ea4d5a901fcca6d014a893d386269308680c1d5c1845c9691cc",
+    "gate_decision_sha256": "f85de29191527cd7ebad6ae081e26de4fa57cd860b3131348566a484fc63e407",
+    "denominators_sha256": "6433513e58a5e9f001470c9bcbfc6bc22d924e2b26bbb99b44d31fe9e7a16a1a",
+    "closure_receipt_sha256": "9deaad2c62e20ca310de90bad5b1ef4256334c1e2addeb913924e0a0b528706a",
+    "postclose_verification_sha256": "390679043a58704c641720317d2546c7c2c4b3314c3d1e597a22040534f48983",
+    "actual_maximum_llm_concurrency": 2,
+    "case_count": 600,
+    "frozen_gates_passed": 17,
+    "frozen_gates_total": 17
+  },
+  "review": {
+    "prequalification_unresolved_BLOCKER": 0,
+    "prequalification_unresolved_HIGH": 0,
+    "postqualification_unresolved_BLOCKER": 0,
+    "postqualification_unresolved_HIGH": 0,
+    "final_outcome_audits": ["correctness_CLEAR", "methodology_CLEAR", "security_reliability_CLEAR"]
+  },
+  "validation": {
+    "static_quality": "PASS",
+    "pytest_passed": 240,
+    "pytest_failed": 0,
+    "final_transition": "PASS",
+    "final_structural_admission": "ADMITTED",
+    "final_denominators": "VALID",
+    "final_checkpoint": "PASS",
+    "final_sqlite_finalization": "FINALIZED",
+    "final_sqlite_stability": "STABLE",
+    "final_artifact_scan": "CLEAN",
+    "final_postclose": "PASS",
+    "final_closure_receipt": "PASS",
+    "final_terminal_verifier": "PASS"
+  }
+}
