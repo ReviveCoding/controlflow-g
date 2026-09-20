@@ -9,7 +9,7 @@ from typing import Any
 from controlflow.core.state import atomic_write_json
 from controlflow.v24.sqlite_lifecycle import owned_connection
 
-TABLES = ("action_ledger", "case_state", "policy_decisions", "ledger_head")
+TABLES = ("action_ledger", "case_state", "policy_decisions", "approval_consumption", "ledger_head")
 
 
 def snapshot(database: Path, output: Path) -> dict[str, Any]:

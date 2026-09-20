@@ -75,7 +75,7 @@ def _target(runtime_path: Path, truth_path: Path, column: str) -> tuple[pd.DataF
     return merged.drop(columns=[column]), merged[column]
 
 
-def _critical_threshold(y: np.ndarray, probabilities: np.ndarray) -> tuple[float, dict[str, float]]:
+def _critical_threshold(y: np.ndarray[Any, Any], probabilities: np.ndarray[Any, Any]) -> tuple[float, dict[str, float]]:
     candidates = np.unique(np.concatenate(([0.0, 1.0], probabilities)))
     eligible: list[tuple[float, float, float, float]] = []
     for threshold in candidates:
@@ -99,7 +99,9 @@ def _critical_threshold(y: np.ndarray, probabilities: np.ndarray) -> tuple[float
     }
 
 
-def _try_xgboost(train_x: pd.DataFrame, train_y: pd.Series, validation_x: pd.DataFrame) -> tuple[Any, np.ndarray]:
+def _try_xgboost(
+    train_x: pd.DataFrame, train_y: pd.Series, validation_x: pd.DataFrame
+) -> tuple[Any, np.ndarray[Any, Any]]:
     from xgboost import XGBClassifier
 
     preprocessor = _features()
@@ -126,17 +128,17 @@ def _try_xgboost(train_x: pd.DataFrame, train_y: pd.Series, validation_x: pd.Dat
 
 
 class EncodedXGBClassifier:
-    def __init__(self, preprocessor: ColumnTransformer, classifier: Any, classes: np.ndarray) -> None:
+    def __init__(self, preprocessor: ColumnTransformer, classifier: Any, classes: np.ndarray[Any, Any]) -> None:
         self.preprocessor = preprocessor
         self.classifier = classifier
         self.classes_ = classes
 
-    def predict_proba(self, frame: pd.DataFrame) -> np.ndarray:
+    def predict_proba(self, frame: pd.DataFrame) -> np.ndarray[Any, Any]:
         return np.asarray(self.classifier.predict_proba(self.preprocessor.transform(frame)))
 
-    def predict(self, frame: pd.DataFrame) -> np.ndarray:
+    def predict(self, frame: pd.DataFrame) -> np.ndarray[Any, Any]:
         encoded = np.asarray(self.classifier.predict(self.preprocessor.transform(frame)), dtype=int)
-        return cast(np.ndarray, self.classes_[encoded])
+        return cast(np.ndarray[Any, Any], self.classes_[encoded])
 
 
 class BlendedCriticalClassifier:
@@ -147,7 +149,7 @@ class BlendedCriticalClassifier:
         self.xgboost = xgboost
         self.xgboost_weight = xgboost_weight
 
-    def predict_proba(self, frame: pd.DataFrame) -> np.ndarray:
+    def predict_proba(self, frame: pd.DataFrame) -> np.ndarray[Any, Any]:
         logistic_probability = np.asarray(self.logistic.predict_proba(frame)[:, 1])
         xgboost_probability = _probability(self.xgboost, frame)
         positive = self.xgboost_weight * xgboost_probability + (1.0 - self.xgboost_weight) * logistic_probability
@@ -163,7 +165,7 @@ def _try_noncritical_xgboost(
     train_x: pd.DataFrame,
     train_y: pd.Series,
     validation_x: pd.DataFrame,
-) -> tuple[EncodedXGBClassifier, np.ndarray]:
+) -> tuple[EncodedXGBClassifier, np.ndarray[Any, Any]]:
     from xgboost import XGBClassifier
 
     classes = np.asarray(sorted(train_y.unique()))
@@ -189,13 +191,15 @@ def _try_noncritical_xgboost(
     return wrapped, wrapped.predict(validation_x)
 
 
-def _probability(model: Any, frame: pd.DataFrame) -> np.ndarray:
+def _probability(model: Any, frame: pd.DataFrame) -> np.ndarray[Any, Any]:
     if isinstance(model, dict):
         return np.asarray(model["classifier"].predict_proba(model["preprocessor"].transform(frame))[:, 1])
     return np.asarray(model.predict_proba(frame)[:, 1])
 
 
-def _fit_calibrator(uncalibrated: np.ndarray, truth: pd.Series) -> tuple[str, Any, dict[str, float], np.ndarray]:
+def _fit_calibrator(
+    uncalibrated: np.ndarray[Any, Any], truth: pd.Series
+) -> tuple[str, Any, dict[str, float], np.ndarray[Any, Any]]:
     selection_mask = np.arange(len(truth)) % 3 == 0
     fit_mask = ~selection_mask
     platt_select = LogisticRegression(random_state=22002).fit(
@@ -224,7 +228,7 @@ def _fit_calibrator(uncalibrated: np.ndarray, truth: pd.Series) -> tuple[str, An
     return method, calibrator, scores, np.asarray(calibrated)
 
 
-def _apply_calibrator(method: str, calibrator: Any, probabilities: np.ndarray) -> np.ndarray:
+def _apply_calibrator(method: str, calibrator: Any, probabilities: np.ndarray[Any, Any]) -> np.ndarray[Any, Any]:
     if method == "platt":
         return np.asarray(calibrator.predict_proba(probabilities.reshape(-1, 1))[:, 1])
     return np.asarray(calibrator.predict(probabilities))
@@ -267,7 +271,7 @@ def train_models(
         ]
     )
     logistic.fit(train_x, train_critical)
-    candidates: dict[str, tuple[Any, np.ndarray]] = {
+    candidates: dict[str, tuple[Any, np.ndarray[Any, Any]]] = {
         "weighted_logistic": (logistic, logistic.predict_proba(validation_x)[:, 1])
     }
     gpu_evidence: dict[str, Any] = {"requested": allow_gpu, "xgboost_cuda_ran": False, "device": None}
@@ -349,7 +353,7 @@ def train_models(
     ).fit(train_severity_x.loc[mask], train_severity.loc[mask])
     validation_severity_x, validation_severity = _target(validation_runtime, validation_truth, "truth_severity")
     validation_noncritical_mask = validation_severity != "CRITICAL"
-    noncritical_candidates: dict[str, tuple[Any, np.ndarray]] = {
+    noncritical_candidates: dict[str, tuple[Any, np.ndarray[Any, Any]]] = {
         "weighted_logistic": (
             logistic_noncritical,
             logistic_noncritical.predict(validation_severity_x.loc[validation_noncritical_mask]),
@@ -461,7 +465,7 @@ def train_models(
     return report
 
 
-def calibrated_probability(model: Any, calibrator: dict[str, Any], frame: pd.DataFrame) -> np.ndarray:
+def calibrated_probability(model: Any, calibrator: dict[str, Any], frame: pd.DataFrame) -> np.ndarray[Any, Any]:
     raw = _probability(model, frame)
     if calibrator["method"] == "platt":
         return np.asarray(calibrator["model"].predict_proba(raw.reshape(-1, 1))[:, 1])

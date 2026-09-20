@@ -1,0 +1,58 @@
+schema_version: 1
+development_roots:
+  - data/v26/development/{rehearsal}
+  - results/v26/development/{rehearsal}
+  - artifacts/v26/development/{rehearsal}
+qualification_roots:
+  - data/v26/qualification/V26QUAL
+  - results/v26/qualification
+  - artifacts/v26/qualification
+final_roots:
+  - data/v26/final/V26FINAL
+  - results/v26/final
+  - artifacts/v26/final
+allowed_ephemeral_files: []
+deferred_receipt_files:
+  - results/v26/development/{rehearsal}/gate_decision.json
+  - results/v26/qualification/gate_decision.json
+  - results/v26/final/gate_decision.json
+development_state_substantive_files:
+  - state/v26_{identity}_bindings.json
+  - state/v26_{identity}_unbound_artifacts.json
+  - state/v26_{identity}_postclose_verification.json
+  - results/v26/development/{rehearsal}/gate_decision.json
+development_terminal_root_anchors:
+  - state/v26_{identity}_closure_receipt.json
+  - state/v26_{identity}_manifest.json
+  - state/v26_{identity}_manifest.proposed.json
+  - state/v26_{identity}_terminal_anchor.json
+final_state_substantive_files:
+  - state/v26_final_bindings.json
+  - state/v26_final_unbound_artifacts.json
+  - state/v26_final_postclose_verification.json
+  - results/v26/final/gate_decision.json
+final_terminal_root_anchors:
+  - state/v26_final_closure_receipt.json
+  - state/v26_final_manifest.json
+  - state/v26_final_manifest.proposed.json
+  - state/v26_final_terminal_anchor.json
+state_substantive_files:
+  - state/v26_qualification_bindings.json
+  - state/v26_unbound_artifacts.json
+  - state/v26_postclose_verification.json
+  - results/v26/qualification/gate_decision.json
+qualification_state_substantive_patterns:
+  - v26_qualification*.json
+  - v26_postclose*.json
+  - v26_unbound*.json
+development_state_substantive_patterns:
+  - v26_{identity}*.json
+final_state_substantive_patterns:
+  - v26_final*.json
+terminal_root_anchors:
+  - state/v26_qualification_closure_receipt.json
+  - state/v26_qualification_manifest.json
+  - state/v26_qualification_manifest.proposed.json
+  - state/v26_qualification_terminal_anchor.json
+substantive_patterns:
+  - "**/*"

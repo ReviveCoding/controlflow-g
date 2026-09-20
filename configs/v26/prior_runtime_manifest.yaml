@@ -1,0 +1,20 @@
+schema_version: 1
+purpose: v26_holdout_contamination_protection
+runtime_patterns:
+  - data/v2/development/cases.parquet
+  - data/v2/internal_eligibility*/runtime.parquet
+  - data/v21/**/runtime_cases.parquet
+  - data/v22/**/runtime_cases.parquet
+  - data/v23/**/runtime_cases.parquet
+  - data/v24/development/**/runtime_cases.parquet
+  - data/v24/qualification/**/runtime_cases.parquet
+  - data/v25/development/**/runtime_cases.parquet
+  - data/v25/qualification/**/runtime_cases.parquet
+  - data/v25/final/**/runtime_cases.parquet
+  - data/v26/development/**/runtime_cases.parquet
+  - data/v26/qualification/**/runtime_cases.parquet
+  - data/v26/final/**/runtime_cases.parquet
+recognized_runtime_filenames:
+  - cases.parquet
+  - runtime.parquet
+  - runtime_cases.parquet

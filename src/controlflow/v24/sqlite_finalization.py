@@ -42,6 +42,29 @@ def finalize(
         integrity = str(connection.execute("PRAGMA integrity_check").fetchone()[0])
         if integrity != "ok":
             raise RuntimeError(f"SQLITE_FINALIZER_INTEGRITY:{integrity}")
+        if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+            raise RuntimeError("SQLITE_FINALIZER_FOREIGN_KEY_INVALID")
+        approval_mismatch = int(
+            connection.execute(
+                """SELECT COUNT(*) FROM action_ledger AS event
+                LEFT JOIN approval_consumption AS consumed ON consumed.event_id=event.event_id
+                WHERE (event.committed=1 AND event.review_required=1 AND event.approval_valid=1
+                    AND (event.approval_token_id IS NULL OR consumed.token_id IS NULL
+                        OR consumed.token_id!=event.approval_token_id OR consumed.consumed_at!=event.created_at))
+                   OR (NOT (event.committed=1 AND event.review_required=1 AND event.approval_valid=1)
+                    AND consumed.token_id IS NOT NULL)"""
+            ).fetchone()[0]
+        )
+        if approval_mismatch:
+            raise RuntimeError("SQLITE_FINALIZER_APPROVAL_CONSUMPTION_INVALID")
+        approval_count = int(connection.execute("SELECT COUNT(*) FROM approval_consumption").fetchone()[0])
+        review_commit_count = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM action_ledger WHERE committed=1 AND review_required=1 AND approval_valid=1"
+            ).fetchone()[0]
+        )
+        if approval_count != review_commit_count:
+            raise RuntimeError("SQLITE_FINALIZER_APPROVAL_COUNT_INVALID")
         ledger = verify_ledger(database)
         if not ledger["valid"] or ledger["event_count"] != expected_events:
             raise RuntimeError("SQLITE_FINALIZER_LEDGER_INVALID")
@@ -67,6 +90,9 @@ def finalize(
         "sqlite_version": sqlite3.sqlite_version,
         "journal_mode": journal_mode,
         "integrity_check": integrity,
+        "foreign_key_check": "ok",
+        "approval_consumption_count": approval_count,
+        "review_commit_count": review_commit_count,
         "checkpoint": list(checkpoint),
         "ledger_event_count": ledger["event_count"],
         "ledger_head": ledger["head"],

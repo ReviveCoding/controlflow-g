@@ -17,8 +17,10 @@ def _database(path: Path) -> None:
         connection.execute("PRAGMA journal_mode=WAL")
         connection.execute(
             "CREATE TABLE action_ledger(sequence_id INTEGER, event_hash TEXT, previous_event_hash TEXT, "
-            "review_required INTEGER, approval_valid INTEGER, committed INTEGER)"
+            "review_required INTEGER, approval_valid INTEGER, committed INTEGER, event_id TEXT, "
+            "approval_token_id TEXT, created_at TEXT)"
         )
+        connection.execute("CREATE TABLE approval_consumption(token_id TEXT, event_id TEXT, consumed_at TEXT)")
         connection.execute("CREATE TABLE ledger_head(singleton INTEGER, event_hash TEXT, sequence_id INTEGER)")
         connection.execute("CREATE TABLE probe(value INTEGER)")
         connection.commit()
@@ -47,7 +49,11 @@ def test_finalizer_rejects_tampered_ledger(tmp_path: Path) -> None:
     path = tmp_path / "test.sqlite"
     _database(path)
     with owned_connection(path) as connection:
-        connection.execute("INSERT INTO action_ledger VALUES (1,'tampered','GENESIS',0,0,0)")
+        connection.execute(
+            "INSERT INTO action_ledger(sequence_id,event_hash,previous_event_hash,"
+            "review_required,approval_valid,committed) "
+            "VALUES (1,'tampered','GENESIS',0,0,0)"
+        )
     with pytest.raises(RuntimeError, match="LEDGER_INVALID"):
         finalize(path, tmp_path / "report.json", expected_events=1)
     assert not (tmp_path / "report.json").exists()

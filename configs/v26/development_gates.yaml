@@ -1,0 +1,10 @@
+schema_version: 1
+role: DEVELOPMENT_ONLY
+requirements:
+  - postclose_pass
+  - denominator_structurally_valid
+  - checkpoint_contract_pass
+  - ledger_valid
+  - artifact_bindings_clean
+  - actual_concurrency_two
+performance_metrics: DIAGNOSTIC_ONLY
