@@ -43,9 +43,13 @@ Iterations V2.1–V2.6 hardened truth separation and authorization, serving late
 
 ## Reproducibility and limits
 
-[`REPRODUCIBILITY.md`](REPRODUCIBILITY.md) gives the portable checks. [`scripts/verify_release_portability.py`](scripts/verify_release_portability.py) checks the immutable promoted tag against the additive line-ending attestation and original frozen receipts; [GitHub Actions](https://github.com/ReviveCoding/controlflow-g/actions) runs those checks on the post-release branch. The research release remains at `f21a4192373c5bcb815e12a7fa10ac8f183b482b`. Subsequent portability and documentation commits on `v2.6-development` do not move that tag.
+[`REPRODUCIBILITY.md`](REPRODUCIBILITY.md) gives the portable checks. [`scripts/verify_release_portability.py`](scripts/verify_release_portability.py) checks the immutable promoted tag against the additive line-ending attestation and original frozen receipts; [GitHub Actions](https://github.com/ReviveCoding/controlflow-g/actions) runs those checks on the post-release branch. The research release remains at `f21a4192373c5bcb815e12a7fa10ac8f183b482b`. The separate `controlflow-g-v26-public` tag identifies the MIT-licensed public package with later portability and documentation work; it does not change the frozen result.
 
-The study uses public-data inputs and synthetic cases with deterministic evaluator truth. Local GPU evidence concerns an NVIDIA RTX 4090 Laptop GPU; it does not establish other hardware performance or bank production fitness. No real financial actions are available. The repo has no LICENSE file, while frozen `pyproject.toml` metadata declares MIT. This conflict requires the owner's licensing decision before changing visibility.
+The study uses public-data inputs and synthetic cases with deterministic evaluator truth. Local GPU evidence concerns an NVIDIA RTX 4090 Laptop GPU; it does not establish other hardware performance or bank production fitness. No real financial actions are available.
+
+## License
+
+ControlFlow-G is licensed under the MIT License. [LICENSE](LICENSE) contains the authoritative distribution terms and matches the existing MIT package metadata.
 
 ## Repository map
 

@@ -1,6 +1,6 @@
 # ControlFlow-G V2.6 — Governed Agent Reliability Research Release
 
-**Local draft; GitHub Release not published.** The eventual release target is the immutable `controlflow-g-v26-promote` tag at `f21a4192373c5bcb815e12a7fa10ac8f183b482b`. The release decision is **PROMOTE for a synthetic research artifact**, not for bank or production deployment.
+The frozen research evaluation is `controlflow-g-v26-promote` at commit `f21a4192373c5bcb815e12a7fa10ac8f183b482b`. The public distribution snapshot is the separate annotated `controlflow-g-v26-public` tag at its peeled packaging commit. The release decision is **PROMOTE for a synthetic research artifact**, not for bank or production deployment. The public tag adds MIT licensing, documentation, and clean-clone CI portability after the frozen result; it does not change the evaluation or metrics.
 
 ## Scope and architecture
 
@@ -31,6 +31,6 @@ Development runs did not substitute for final evidence. Failed qualification ide
 
 ## Portability and limitations
 
-Post-release CI and public-readiness improvements live on `v2.6-development` after the frozen research-release tag. An additive line-ending attestation and `scripts/verify_release_portability.py` prove how normalized Git blobs reconstruct the original Windows frozen bytes and receipts; neither changes the promoted tag or original evidence.
+Post-release CI and public-readiness improvements live on `v2.6-development` after the frozen research-release tag. An additive line-ending attestation and `scripts/verify_release_portability.py` prove how normalized Git blobs reconstruct the original Windows frozen bytes and receipts; neither changes the promoted tag or original evidence. The `controlflow-g-v26-public` tag contains this release-notes source, the technical report, the reproducibility guide, and [LICENSE](https://github.com/ReviveCoding/controlflow-g/blob/controlflow-g-v26-public/LICENSE).
 
-This study uses synthetic cases and public-data inputs, with local NVIDIA RTX 4090 Laptop GPU evidence. It is not a bank system or real financial-action workflow. Zero observed failures do not establish zero true risk or production suitability. No LICENSE file exists, while frozen `pyproject.toml` metadata declares MIT. The owner must resolve this conflict before public visibility or publication of this draft as a GitHub Release.
+This study uses synthetic cases and public-data inputs, with local NVIDIA RTX 4090 Laptop GPU evidence. It is not a bank system or real financial-action workflow. Zero observed failures do not establish zero true risk or production suitability. The public package is licensed under MIT; [LICENSE](https://github.com/ReviveCoding/controlflow-g/blob/controlflow-g-v26-public/LICENSE) is the authoritative distribution text and aligns with `pyproject.toml` metadata.

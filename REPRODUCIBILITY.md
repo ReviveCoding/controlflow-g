@@ -2,14 +2,15 @@
 
 ## Release boundaries
 
-The frozen research release is the annotated tag `controlflow-g-v26-promote`, peeled commit `f21a4192373c5bcb815e12a7fa10ac8f183b482b`. The development branch contains later portability and documentation changes. Verify the tag without changing it:
+The frozen research release is the annotated tag `controlflow-g-v26-promote`, peeled commit `f21a4192373c5bcb815e12a7fa10ac8f183b482b`. The separate `controlflow-g-v26-public` tag identifies the later MIT-licensed distribution package. Verify both tags without changing them:
 
 ```sh
 git rev-parse 'controlflow-g-v26-promote^{commit}'
 git show --no-patch --format=fuller controlflow-g-v26-promote
+git rev-parse 'controlflow-g-v26-public^{commit}'
 ```
 
-The first command must print `f21a4192373c5bcb815e12a7fa10ac8f183b482b`. Read [`state/v26_release_decision.json`](state/v26_release_decision.json), [`reports/v26/release.md`](reports/v26/release.md), [`results/v26/final/gate_decision.json`](results/v26/final/gate_decision.json), and [`results/v26/final/denominators.json`](results/v26/final/denominators.json) to inspect the frozen conclusion and metrics. **Do not rerun V26QUAL or V26FINAL as fresh evidence.** Their identities and holdouts are consumed.
+The first command must print `f21a4192373c5bcb815e12a7fa10ac8f183b482b`. The public tag must peel to the later packaging commit; its [LICENSE](LICENSE) file is authoritative for distribution terms. Read [`state/v26_release_decision.json`](state/v26_release_decision.json), [`reports/v26/release.md`](reports/v26/release.md), [`results/v26/final/gate_decision.json`](results/v26/final/gate_decision.json), and [`results/v26/final/denominators.json`](results/v26/final/denominators.json) to inspect the frozen conclusion and metrics. **Do not rerun V26QUAL or V26FINAL as fresh evidence.** Their identities and holdouts are consumed.
 
 ## Environment and responsibilities
 
