@@ -1,67 +1,85 @@
-# ControlFlow-G V2.6
+# ControlFlow-G
 
-ControlFlow-G studies how a local agent can investigate synthetic financial-services control exceptions while keeping risk decisions, authorization, actions, and evaluation independently verifiable.
+ControlFlow-G evaluates a tool-using LLM agent for investigating synthetic financial-control exceptions. The system separates evidence retrieval and model-generated explanations from authorization, human-review requirements, and state-changing operations.
 
-## Status
+This is a local research simulation. It does not connect to banking systems or perform real financial actions.
 
-**Synthetic research release: PROMOTE under the frozen V2.6 evaluation protocol.** The research release is the immutable [`controlflow-g-v26-promote`](https://github.com/ReviveCoding/controlflow-g/tree/controlflow-g-v26-promote) tag. This is a local, production-like simulation, not a bank or production deployment. It performs no real financial actions.
+## Architecture
 
-## Problem and architecture
+A case moves through these stages:
 
-An agent can retrieve the wrong policy version, miss a critical case, trust adversarial evidence, or propose an action outside its authority. ControlFlow-G separates learned risk estimates from deterministic policy and action control. Point-in-time data and policy retrieval, calibrated models, bounded read-only tools, evidence verification, external runtime authorization, human approval, idempotent simulated actions, and a tamper-evident audit trail form one evaluated workflow.
+1. Retrieve case data and the policy version applicable at the decision time.
+2. Estimate risk and generate a bounded, structured investigation.
+3. Verify evidence and enforce policy independently of the LLM.
+4. Require approval where applicable and commit simulated actions transactionally.
+5. Record audit events and evaluate the entire workflow.
 
-`synthetic/public-data lakehouse → calibrated models → temporal retrieval → bounded agent → evidence verifier → PDP/PEP → approval → transactional simulated action → audit → frozen release gates`
+The LLM cannot authorize its own actions or alter evaluator truth. Read-only queries and typed actions enforce the interface boundary; policy is rechecked before simulated commits.
 
-The LLM may produce a structured explanation; it does not define ground truth or authorize a commit. See [TECHNICAL_REPORT_V26.md](TECHNICAL_REPORT_V26.md) for the design and threat model.
+For component details, see [the project specification](PROJECT_SPEC.md) and [technical report](TECHNICAL_REPORT_V26.md).
 
-## Frozen V26FINAL result
+## Frozen V2.6 results
 
-The one-shot, sealed 600-case final run used the frozen Qwen3/vLLM configuration at observed maximum LLM concurrency 2. The table comes from [`results/v26/final/gate_decision.json`](results/v26/final/gate_decision.json), [`results/v26/final/denominators.json`](results/v26/final/denominators.json), and [`state/v26_release_decision.json`](state/v26_release_decision.json).
+The final experiment used one pinned Qwen3/vLLM configuration and 600 sealed synthetic cases, with observed maximum LLM concurrency of two.
 
-| Measure | Final result |
+| Metric | Frozen final result |
 | --- | ---: |
-| Core STC | 489/600 (81.50%) |
-| Binary critical recall | 141/144 (97.92%) |
-| Typed CRITICAL recall | 141/144 (97.92%) |
+| Safe Task Completion | 489/600 (81.50%) |
+| Critical recall | 141/144 (97.92%) |
 | Stale-policy errors | 0/150 |
+| Temporal policy accuracy | 600/600 |
+| Evidence requirements satisfied | 1,005/1,005 |
 | Structured-output failures | 0/600 |
 | Unauthorized commits | 0/83 |
 | Approval-bypass commits | 0/255 |
 | Duplicate commits | 0/600 |
-| Temporal policy accuracy | 600/600 (100%) |
-| Evidence completeness | 1005/1005 (100%) |
-| Total P95 latency, concurrency 2 | 7.392 seconds |
-| Frozen release gates | 17/17 passed |
+| End-to-end P95 latency | 7.392 seconds |
+| Predefined research-release gates | 17/17 passed |
 
-Zero observed failures in this synthetic sample do not establish zero true risk.
+Safe Task Completion requires the task result, evidence, policy timing, and authorization to be correct, with no critical policy violation. It is deliberately stricter than nominal task success.
 
-## Evaluation and reliability lessons
+The zero-event rows apply only to the tested opportunity sets. They do not establish zero risk in a live deployment or generalize to other institutions, models, or hardware.
 
-Development runs and earlier failed qualifications are diagnostic, not final evidence. Each failed qualification identity was permanently consumed. Structural fixes preceded a new holdout, a fresh V26QUAL, independent post-qualification review, and a fresh one-shot V26FINAL. The release decision and artifact hashes are in [`state/v26_release_decision.json`](state/v26_release_decision.json) and [`reports/v26/release.md`](reports/v26/release.md).
+Primary records: [release decision](state/v26_release_decision.json), [gate decisions](results/v26/final/gate_decision.json), and [denominators](results/v26/final/denominators.json).
 
-Iterations V2.1–V2.6 hardened truth separation and authorization, serving latency, zero-denominator evaluation, SQLite lifecycle, checkpoint schema, semantic-versus-provenance comparison, and cross-platform frozen-byte portability. Those defects and consumed runs are documented in the versioned reports; they are part of the method's audit trail.
+## Engineering and evaluation decisions
 
-## Reproducibility and limits
+- **Independent authority:** the model can propose and explain; deterministic code verifies evidence, policy, approval, and commits.
+- **Time-valid retrieval:** evaluation checks whether the agent selected the policy that applied when a case occurred, not a later revision.
+- **Idempotent execution:** a transactional SQLite ledger prevents repeated simulated side effects and records outcomes.
+- **Failure-driven development:** earlier runs uncovered evaluation-truth leakage, denominator errors, mutable SQLite state, and checkpoint-schema issues. Those runs were retained as diagnostic history.
+- **Fresh confirmation:** structural corrections were followed by a new qualification, independent review, and a separate one-shot final evaluation.
 
-[`REPRODUCIBILITY.md`](REPRODUCIBILITY.md) gives the portable checks. [`scripts/verify_release_portability.py`](scripts/verify_release_portability.py) checks the immutable promoted tag against the additive line-ending attestation and original frozen receipts; [GitHub Actions](https://github.com/ReviveCoding/controlflow-g/actions) runs those checks on the post-release branch. The research release remains at `f21a4192373c5bcb815e12a7fa10ac8f183b482b`. The separate `controlflow-g-v26-public` tag identifies the MIT-licensed public package with later portability and documentation work; it does not change the frozen result.
+These decisions and their limitations are documented in [the V2.6 report](TECHNICAL_REPORT_V26.md).
 
-The study uses public-data inputs and synthetic cases with deterministic evaluator truth. Local GPU evidence concerns an NVIDIA RTX 4090 Laptop GPU; it does not establish other hardware performance or bank production fitness. No real financial actions are available.
+## Reproducing software and evidence checks
 
-## License
+The immutable research result belongs to the annotated [controlflow-g-v26-promote tag](https://github.com/ReviveCoding/controlflow-g/tree/controlflow-g-v26-promote). The public package has a separate [controlflow-g-v26-public tag](https://github.com/ReviveCoding/controlflow-g/tree/controlflow-g-v26-public). Neither should be rewritten or treated as a fresh evaluation.
 
-ControlFlow-G is licensed under the MIT License. [LICENSE](LICENSE) contains the authoritative distribution terms and matches the existing MIT package metadata.
+Portable verification uses Python 3.11 and the locked environment:
 
-## Repository map
+    uv sync --locked --extra dev
+    uv run ruff format --check src tests
+    uv run ruff check src tests
+    uv run mypy src
+    uv run pytest -q -m "not gpu and not spark and not network and not sealed"
+    uv run python scripts/verify_release_portability.py
 
-| Path | Purpose |
+The [reproducibility guide](REPRODUCIBILITY.md) explains artifact hashes, historical Windows line endings, and why the frozen cases must not be rerun for model selection. GitHub Actions runs the portable checks.
+
+## Repository guide
+
+| Directory | Contents |
 | --- | --- |
-| `src/controlflow/` | Data, models, retrieval, agent runtime, authorization, audit, and evaluation code |
-| `configs/` | Resource limits, schemas, versioned policies, denominators, and gates |
-| `data/`, `artifacts/`, `results/` | Synthetic cohorts, execution artifacts, and scored evidence |
-| `state/` | Freeze manifests, execution state, review findings, receipts, and release decision |
-| `reports/` | Versioned research reports and portability attestation |
-| `scripts/` | Reproducible checks and phase entry points |
-| `tests/` | Portable and specialized test suites |
+| src/controlflow/ | Agent runtime, models, retrieval, authorization, audit, and evaluation |
+| configs/ | Resource limits, schemas, policy versions, and release criteria |
+| tests/ | Unit, integration, and failure-path checks |
+| data/, artifacts/, results/ | Synthetic datasets and measured evidence |
+| state/ | Frozen manifests, receipts, and release decisions |
+| reports/ | Evaluation and technical reports |
 
-See [PROJECT_SPEC.md](PROJECT_SPEC.md) for the study protocol, [RELEASE_NOTES_V26.md](RELEASE_NOTES_V26.md) for the local release-notes draft, and [SECURITY.md](SECURITY.md) for security reporting.
+## Limits and licensing
 
+The benchmark uses public-source grounding and synthetic enterprise truth on a local RTX 4090 Laptop GPU. It does not measure analyst time saved, real human-review quality, bank production safety, or operating costs at customer scale.
+
+ControlFlow-G is distributed under the [MIT License](LICENSE). See [security reporting](SECURITY.md) and [reproducibility](REPRODUCIBILITY.md) for implementation and validation boundaries.
