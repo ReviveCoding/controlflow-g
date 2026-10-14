@@ -25,17 +25,15 @@ def test_cancellation_before_commit_prevents_entry() -> None:
     assert lease.cancel() is False
     assert lease.cancelled.is_set()
     assert lease.commit_completed is False
-    with pytest.raises(ToolDeadlineExpired, match="before commit"):
-        with lease.commit_section():
-            pytest.fail("a cancelled commit must not start")
+    with pytest.raises(ToolDeadlineExpired, match="before commit"), lease.commit_section():
+        pytest.fail("a cancelled commit must not start")
 
 
 def test_expired_lease_prevents_commit_entry() -> None:
     lease = ToolDeadlineLease(time.monotonic() - 1)
 
-    with pytest.raises(ToolDeadlineExpired, match="before commit"):
-        with lease.commit_section():
-            pytest.fail("an expired commit must not start")
+    with pytest.raises(ToolDeadlineExpired, match="before commit"), lease.commit_section():
+        pytest.fail("an expired commit must not start")
     assert lease.commit_completed is False
     assert lease.cancel() is False
 
@@ -43,15 +41,13 @@ def test_expired_lease_prevents_commit_entry() -> None:
 def test_commit_section_exit_does_not_imply_successful_side_effect() -> None:
     lease = active_lease()
 
-    with pytest.raises(ValueError, match="write failed"):
-        with lease.commit_section():
-            raise ValueError("write failed")
+    with pytest.raises(ValueError, match="write failed"), lease.commit_section():
+        raise ValueError("write failed")
 
     assert lease.commit_completed is True
     assert lease.cancel() is True  # Commit was entered, but durability is unknown.
-    with pytest.raises(ToolDeadlineExpired, match="before commit"):
-        with lease.commit_section():
-            pytest.fail("a cancelled lease must not permit another commit")
+    with pytest.raises(ToolDeadlineExpired, match="before commit"), lease.commit_section():
+        pytest.fail("a cancelled lease must not permit another commit")
 
 
 def test_cancel_waits_for_active_commit_before_closing_lease() -> None:
@@ -97,9 +93,8 @@ def test_cancel_waits_for_active_commit_before_closing_lease() -> None:
     assert cancel_results == [True]
     assert lease.cancelled.is_set()
     assert lease.commit_completed is True
-    with pytest.raises(ToolDeadlineExpired, match="before commit"):
-        with lease.commit_section():
-            pytest.fail("no new commit may start after cancellation")
+    with pytest.raises(ToolDeadlineExpired, match="before commit"), lease.commit_section():
+        pytest.fail("no new commit may start after cancellation")
 
 
 def test_context_binding_is_reset_after_cancellation() -> None:
@@ -107,9 +102,8 @@ def test_context_binding_is_reset_after_cancellation() -> None:
     token = bind_tool_deadline(lease)
     try:
         lease.cancel()
-        with pytest.raises(ToolDeadlineExpired, match="before commit"):
-            with tool_commit_section():
-                pytest.fail("the bound, cancelled lease must reject commits")
+        with pytest.raises(ToolDeadlineExpired, match="before commit"), tool_commit_section():
+            pytest.fail("the bound, cancelled lease must reject commits")
     finally:
         reset_tool_deadline(token)
 
