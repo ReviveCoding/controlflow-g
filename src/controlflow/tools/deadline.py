@@ -14,6 +14,14 @@ class ToolDeadlineExpired(RuntimeError):
 
 @dataclass
 class ToolDeadlineLease:
+    """Guard irreversible commits against timeout and caller cancellation.
+
+    A cancellation waits for any active commit section to exit and then rejects
+    future commit entries. Entering or leaving the section does not itself prove
+    that an external side effect was durably committed; callers must reconcile
+    the actual result with their authoritative store.
+    """
+
     deadline: float
     cancelled: Event = field(default_factory=Event)
     _commit_permit: Lock = field(default_factory=Lock)
@@ -21,11 +29,15 @@ class ToolDeadlineLease:
     _commit_completed: bool = False
 
     def cancel(self) -> bool:
-        """Cancel future commits and report whether one already completed."""
+        """Prevent further commits, waiting for any active commit section to exit.
+
+        Return True if a commit section was entered, not if its side effects
+        succeeded. Callers must reconcile a possible commit before retrying.
+        """
         with self._commit_permit:
-            committed = self._commit_started
+            commit_entered = self._commit_started
             self.cancelled.set()
-            return committed
+            return commit_entered
 
     def assert_active(self) -> None:
         if self.cancelled.is_set() or time.monotonic() >= self.deadline:
@@ -33,12 +45,17 @@ class ToolDeadlineLease:
 
     @property
     def commit_completed(self) -> bool:
+        """Whether a commit section exited, even if its body raised an error."""
         with self._commit_permit:
             return self._commit_completed
 
     @contextmanager
     def commit_section(self) -> Iterator[None]:
-        """Serialize the irreversible commit with caller-side cancellation."""
+        """Serialize an irreversible operation with caller-side cancellation.
+
+        Once entered, the section runs to its normal exit or exception. The
+        lease cannot interrupt or roll back an already-started side effect.
+        """
         with self._commit_permit:
             self.assert_active()
             self._commit_started = True

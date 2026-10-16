@@ -200,12 +200,13 @@ class ToolRegistry:
                 try:
                     outcome_kind, outcome_value = outcome.get(timeout=spec.timeout_seconds)
                 except queue.Empty as exc:
-                    commit_completed = lease.cancel()
-                    # Cancellation takes the same permit as the irreversible
-                    # commit. It therefore returns promptly for pre-commit
-                    # work, or waits for an already-entered atomic commit and
-                    # then prevents every later commit attempt.
-                    status = "timeout_after_commit_reconciled" if commit_completed else "timeout_precommit_cancelled"
+                    commit_entered = lease.cancel()
+                    # Cancellation waits for an already-entered commit section
+                    # to exit before blocking all subsequent commits. Entry
+                    # does not prove the external side effect succeeded; its
+                    # durable outcome still requires reconciliation.
+                    # Preserve existing audit status names for compatibility.
+                    status = "timeout_after_commit_reconciled" if commit_entered else "timeout_precommit_cancelled"
                     raise ToolDeadlineExpired(status) from exc
                 if outcome_kind == "error":
                     if isinstance(outcome_value, BaseException):
