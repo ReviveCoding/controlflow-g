@@ -415,7 +415,7 @@ def test_actual_candidate_runner_recovers_after_durable_commit_before_partial_ou
             }
         ]
     )
-    checkpoint_fields = {name: "bound" for name in REQUIRED_FIELDS}
+    checkpoint_fields = dict.fromkeys(REQUIRED_FIELDS, "bound")
     partial = tmp_path / "actual.partial.jsonl"
     checkpoint = tmp_path / "actual.checkpoint.json"
     output = tmp_path / "actual.parquet"
