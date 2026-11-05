@@ -71,11 +71,11 @@ def risk_coverage(
         radius = z * np.sqrt(proportion * (1 - proportion) / trials + z**2 / (4 * trials**2)) / denominator
         return float(max(0.0, center - radius)), float(min(1.0, center + radius))
 
+    critical = labels == 3
+    errors = predicted != labels
+    critical_count = int(critical.sum())
     for threshold in thresholds:
         automatic = confidence >= threshold
-        critical = labels == 3
-        errors = predicted != labels
-        critical_count = int(critical.sum())
         capture_count = int((~automatic & critical).sum())
         residual_count = int((automatic & critical & errors).sum())
         capture_low, capture_high = wilson(capture_count, critical_count)
@@ -85,8 +85,8 @@ def risk_coverage(
                 "threshold": threshold,
                 "automation_coverage": float(automatic.mean()),
                 "review_rate": float((~automatic).mean()),
-                "critical_capture": float((~automatic & critical).sum() / max(1, critical.sum())),
-                "residual_critical_error": float((automatic & critical & errors).sum() / max(1, critical.sum())),
+                "critical_capture": float(capture_count / max(1, critical_count)),
+                "residual_critical_error": float(residual_count / max(1, critical_count)),
                 "review_precision": float((~automatic & errors).sum() / max(1, (~automatic).sum())),
                 "critical_count": float(critical_count),
                 "critical_capture_ci95_low": capture_low,

@@ -226,7 +226,7 @@ class StubRunner:
 
 
 def _checkpoint_fields() -> dict[str, object]:
-    return {name: 1 for name in REQUIRED_FIELDS}
+    return dict.fromkeys(REQUIRED_FIELDS, 1)
 
 
 def test_actual_runner_resume_rejects_fingerprint_mismatch(tmp_path: Path) -> None:

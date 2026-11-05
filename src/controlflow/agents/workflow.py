@@ -142,10 +142,11 @@ class RiskService:
         self.review_threshold = 0.8
 
     def predict_details(self, row: pd.Series, *, calibrated: bool = True) -> tuple[np.ndarray, float]:
-        probability = self.model.predict_proba(pd.DataFrame([row]))[0]
+        row_frame = pd.DataFrame([row])
+        probability = self.model.predict_proba(row_frame)[0]
         if calibrated and self.calibrator is not None:
             probability = self.calibrator.predict(probability.reshape(1, -1))[0]  # type: ignore[attr-defined]
-        numeric = pd.DataFrame([row])[["amount", "repeat_count", "historical_failures", "data_sensitivity"]]
+        numeric = row_frame[["amount", "repeat_count", "historical_failures", "data_sensitivity"]]
         return probability, float(-self.anomaly.score_samples(numeric)[0])
 
     def predict(self, row: pd.Series, *, calibrated: bool = True) -> tuple[str, float, float]:
