@@ -23,14 +23,23 @@ def build_case_features(cases: pd.DataFrame, events: pd.DataFrame) -> pd.DataFra
     right["system_known_at"] = right.get("system_known_at", right["event_timestamp"])
     right["event_sequence"] = right.get("event_sequence", 0)
     feature_columns = [column for column in right.columns if column not in {"entity_id", "event_timestamp"}]
+    relevant_events = right[right["entity_id"].isin(left["entity_id"])]
+    histories_by_entity = {
+        entity: history.sort_values(["event_timestamp", "system_known_at", "event_sequence"])
+        for entity, history in relevant_events.groupby("entity_id", sort=False)
+    }
+    empty_history = right.iloc[:0]
     rows: list[dict[str, object]] = []
     for case in left.sort_values(["event_timestamp", "entity_id"]).to_dict("records"):
-        candidates = right[
-            (right["entity_id"] == case["entity_id"])
-            & (right["event_timestamp"] <= case["event_timestamp"])
-            & (right["system_known_at"] <= case["prediction_system_time"])
-            & ((right["event_timestamp"] < case["event_timestamp"]) | (right["event_sequence"] < case["case_sequence"]))
-        ].sort_values(["event_timestamp", "system_known_at", "event_sequence"])
+        history = histories_by_entity.get(case["entity_id"], empty_history)
+        candidates = history[
+            (history["event_timestamp"] <= case["event_timestamp"])
+            & (history["system_known_at"] <= case["prediction_system_time"])
+            & (
+                (history["event_timestamp"] < case["event_timestamp"])
+                | (history["event_sequence"] < case["case_sequence"])
+            )
+        ]
         output = dict(case)
         if not candidates.empty:
             match = candidates.iloc[-1]
